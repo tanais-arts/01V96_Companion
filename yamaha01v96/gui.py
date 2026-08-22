@@ -291,6 +291,8 @@ class App(tk.Tk):
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=4, pady=(4, 0))
         name_row = NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal", show_read_button=False)
+        ttk.Button(name_row.frame, text="◀", width=3, command=lambda: self._strip_shift_channel(-1)).pack(side="left", padx=(8, 2))
+        ttk.Button(name_row.frame, text="▶", width=3, command=lambda: self._strip_shift_channel(1)).pack(side="left")
         ttk.Button(name_row.frame, text="Tout lire", command=self.read_all).pack(side="left", padx=8)
 
         body = ttk.Frame(tab)
@@ -301,7 +303,15 @@ class App(tk.Tk):
         self._build_strip_aux(body)
         self._build_strip_bus(body)
         self._build_strip_fader(body)
+        self._build_strip_master(body)
         self._build_strip_copy_tools(body)
+
+    def _strip_shift_channel(self, delta: int) -> None:
+        """◀/▶ sur la ligne NOM : change juste le canal affiché puis relit
+        tout (équivalent à choisir le canal dans le sélecteur + "Tout lire",
+        y compris le nom - déjà inclus dans read_all() via NameRow)."""
+        self.channel_var.set(((self.channel_var.get() - 1 + delta) % 32) + 1)
+        self.read_all()
 
     def _build_strip_dynamics(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Dynamique")
@@ -416,17 +426,26 @@ class App(tk.Tk):
         Knob(self, frame, "kInputChannelPan", "kChannelPan", "Pan").pack(pady=4)
         Fader(self, frame, "kInputFader", "kFader", "Niveau").pack(pady=4, fill="y", expand=True)
 
+    def _build_strip_master(self, parent: tk.Widget) -> None:
+        """Bus stéréo (MASTER) : jamais lu/écrit ailleurs dans l'appli - ces
+        deux contrôles utilisent toujours le canal 0 (voir _channel_for),
+        indépendamment du canal d'entrée sélectionné en haut de fenêtre."""
+        frame = ttk.LabelFrame(parent, text="MASTER")
+        frame.pack(side="left", fill="y", padx=3)
+        Toggle(self, frame, "kStereoChannelOn", "kChannelOn", "On").pack(pady=4)
+        Fader(self, frame, "kStereoFader", "kFader", "Master", length=200).pack(pady=4)
+
     def _build_strip_copy_tools(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Copier / Coller (tranche)")
         frame.pack(side="left", fill="y", padx=3)
         btns = ttk.Frame(frame)
         btns.pack(pady=4)
-        ttk.Button(btns, text="COPY ALL", width=10, command=self._strip_copy_all).pack(side="left", padx=2)
+        ttk.Button(btns, text="COPY ALL", width=10, command=self._strip_copy_all).pack(pady=2)
         self.strip_copy_sel_btn = ttk.Button(btns, text="COPY SEL.", width=10, command=self._strip_copy_sel_toggle)
-        self.strip_copy_sel_btn.pack(side="left", padx=2)
-        ttk.Button(btns, text="PASTE TO...", width=10, command=self._strip_paste_to).pack(side="left", padx=2)
+        self.strip_copy_sel_btn.pack(pady=2)
+        ttk.Button(btns, text="PASTE TO...", width=10, command=self._strip_paste_to).pack(pady=2)
         self.strip_clipboard_label = ttk.Label(
-            frame, text="Presse-papiers tranche : vide", foreground="#666", wraplength=140,
+            frame, text="Presse-papiers tranche : vide", foreground="#666", wraplength=100,
         )
         self.strip_clipboard_label.pack(anchor="w", padx=2, pady=(2, 4))
 
@@ -647,7 +666,11 @@ class App(tk.Tk):
 
     # -- parameter I/O, routed through self.console -------------------------
     def _channel_for(self, group: str) -> int:
-        return self.effect_channel if group == "kEffect" else self.channel
+        if group == "kEffect":
+            return self.effect_channel
+        if group.startswith("kStereo"):
+            return 0
+        return self.channel
 
     def set_parameter(self, group: str, name: str, value: int) -> None:
         if self.console is None:
@@ -830,13 +853,14 @@ class App(tk.Tk):
 
     def _strip_param_defs(self) -> list[tuple[str, str]]:
         """(group, name) pairs for every control on the Tranche tab, except
-        stereo pairing (kInputPair) which "COPY ALL" must not touch."""
+        stereo pairing (kInputPair) which "COPY ALL" must not touch, and the
+        MASTER section (kStereo*), which isn't a per-input-channel setting."""
         seen: set[tuple[str, str]] = set()
         pairs: list[tuple[str, str]] = []
         for row in self.rows:
             if not isinstance(row, (Knob, Toggle, EnumSelector, Fader)):
                 continue
-            if row.group == "kInputPair":
+            if row.group == "kInputPair" or row.group.startswith("kStereo"):
                 continue
             key = (row.group, row.name)
             if key not in seen:
@@ -904,6 +928,7 @@ class App(tk.Tk):
             selected_defs = [
                 (row.group, row.name) for row in self.rows
                 if isinstance(row, (Knob, Toggle, EnumSelector, Fader)) and row.selected
+                and not row.group.startswith("kStereo")
             ]
             if not selected_defs:
                 messagebox.showerror("PASTE TO", "Aucun réglage sélectionné (COPY SEL.).")
