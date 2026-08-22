@@ -68,7 +68,8 @@ class Knob(tk.Frame):
     def _angle_for(self, value: int) -> float:
         span = self.pd.max - self.pd.min
         frac = 0.0 if span == 0 else (value - self.pd.min) / span
-        return math.radians(135 - frac * self.SWEEP_DEG)
+        # +90° : le centre du sweep pointe vers midi (12h), pas 3h.
+        return math.radians(225 - frac * self.SWEEP_DEG)
 
     def _redraw(self) -> None:
         c = self.canvas
