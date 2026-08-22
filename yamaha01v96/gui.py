@@ -338,8 +338,8 @@ class App(tk.Tk):
     def _build_strip_aux(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Envois AUX")
         frame.pack(side="left", fill="y", padx=3)
-        for i in range(1, 13):
-            row, col = divmod(i - 1, 3)
+        for i in range(1, 9):
+            row, col = divmod(i - 1, 4)
             cell = ttk.Frame(frame)
             cell.grid(row=row, column=col, padx=3, pady=3)
             ttk.Label(cell, text=f"AUX {i}", font=("", 8, "bold")).pack()
@@ -368,6 +368,7 @@ class App(tk.Tk):
         frame = ttk.LabelFrame(parent, text="Fader")
         frame.pack(side="left", fill="both", expand=True, padx=3)
         Toggle(self, frame, "kInputChannelOn", "kChannelOn", "On").pack(pady=4)
+        Toggle(self, frame, "kInputPair", "kPair", "Paire").pack(pady=4)
         Knob(self, frame, "kInputChannelPan", "kChannelPan", "Pan").pack(pady=4)
         Fader(self, frame, "kInputFader", "kFader", "Niveau").pack(pady=4, fill="y", expand=True)
 
@@ -608,18 +609,24 @@ class App(tk.Tk):
             )
             self.log(f"TX {group}.{name} ch={channel} value={value} : {msg.hex(' ')}")
 
-    def request_parameter(self, group: str, name: str, on_result) -> None:
+    def request_parameter(self, group: str, name: str, on_result, on_failure=None) -> None:
         if self.console is None:
             self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
+            if on_failure is not None:
+                on_failure()
             return
         channel = self._channel_for(group)
         try:
             value = self.console.request_parameter(group, name, channel)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
             self.log(f"Erreur lecture {group}.{name} : {exc}")
+            if on_failure is not None:
+                on_failure()
             return
         if value is None:
             self.log(f"RX {group}.{name} ch={channel} : pas de réponse (console absente ou simulation).")
+            if on_failure is not None:
+                on_failure()
             return
         self.log(f"RX {group}.{name} ch={channel} value={value}")
         on_result(value)

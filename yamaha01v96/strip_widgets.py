@@ -42,6 +42,7 @@ class Knob(tk.Frame):
         self.name = name
         self.pd: ParamDef = app.params.get(group, name)
         self.value = self.pd.default
+        self._stale = False
         self._drag_start_y: int | None = None
         self._drag_start_value: int | None = None
 
@@ -50,6 +51,7 @@ class Knob(tk.Frame):
         self.canvas.pack()
         self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=8)
         self.value_label.pack()
+        ttk.Button(self, text="R", width=2, command=self.get_value).pack(pady=(1, 0))
 
         self.canvas.bind("<Button-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
@@ -77,7 +79,7 @@ class Knob(tk.Frame):
             cx, cy, cx + r * math.cos(angle), cy - r * math.sin(angle),
             width=2, fill="#c33",
         )
-        self.value_label.config(text=self._display_text())
+        self.value_label.config(text=self._display_text(), foreground=("#e80" if self._stale else ""))
 
     def _display_text(self) -> str:
         converted = converters.raw_to_display(self.pd, self.value)
@@ -105,14 +107,20 @@ class Knob(tk.Frame):
         if value == self.value:
             return
         self.value = value
+        self._stale = False
         self._redraw()
         self.app.set_parameter(self.group, self.name, self.value)
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value)
+        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
 
     def set_raw_value(self, value: int) -> None:
         self.value = max(self.pd.min, min(self.pd.max, value))
+        self._stale = False
+        self._redraw()
+
+    def _on_read_failed(self) -> None:
+        self._stale = True
         self._redraw()
 
 
@@ -126,11 +134,13 @@ class Toggle(tk.Frame):
         self.name = name
         self.pd: ParamDef = app.params.get(group, name)
         self.value = self.pd.default
+        self._stale = False
 
         ttk.Label(self, text=label, font=("", 8), anchor="center").pack()
         self.canvas = tk.Canvas(self, width=32, height=18, highlightthickness=0)
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self._on_click)
+        ttk.Button(self, text="R", width=2, command=self.get_value).pack(pady=(1, 0))
 
         self._redraw()
         app.rows.append(self)
@@ -139,18 +149,25 @@ class Toggle(tk.Frame):
         c = self.canvas
         c.delete("all")
         on = self.value >= self.pd.max
-        c.create_rectangle(1, 1, 31, 17, fill=("#2a2" if on else "#555"), outline="#222")
+        outline, width = ("#e80", 2) if self._stale else ("#222", 1)
+        c.create_rectangle(1, 1, 31, 17, fill=("#2a2" if on else "#555"), outline=outline, width=width)
 
     def _on_click(self, _event: tk.Event) -> None:
         self.value = self.pd.min if self.value >= self.pd.max else self.pd.max
+        self._stale = False
         self._redraw()
         self.app.set_parameter(self.group, self.name, self.value)
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value)
+        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
 
     def set_raw_value(self, value: int) -> None:
         self.value = value
+        self._stale = False
+        self._redraw()
+
+    def _on_read_failed(self) -> None:
+        self._stale = True
         self._redraw()
 
 
@@ -170,6 +187,7 @@ class EnumSelector(tk.Frame):
         combo = ttk.Combobox(self, textvariable=self.var, values=self.labels, state="readonly", width=9)
         combo.pack()
         combo.bind("<<ComboboxSelected>>", lambda _e: self._on_change())
+        ttk.Button(self, text="R", width=2, command=self.get_value).pack(pady=(1, 0))
 
         app.rows.append(self)
 
@@ -178,7 +196,10 @@ class EnumSelector(tk.Frame):
         self.app.set_parameter(self.group, self.name, value)
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value)
+        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
+
+    def _on_read_failed(self) -> None:
+        pass  # combobox has no compact way to flag staleness; failures still show in the log panel
 
     def set_raw_value(self, value: int) -> None:
         self.var.set(self.labels[value - self.pd.min])
@@ -203,7 +224,9 @@ class Fader(tk.Frame):
         ).pack()
         self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=10)
         self.value_label.pack()
+        ttk.Button(self, text="Lire", width=6, command=self.get_value).pack(pady=(2, 0))
 
+        self._stale = False
         self._redraw()
         app.rows.append(self)
 
@@ -212,15 +235,21 @@ class Fader(tk.Frame):
         return converted if converted is not None else str(self.var.get())
 
     def _redraw(self) -> None:
-        self.value_label.config(text=self._display_text())
+        self.value_label.config(text=self._display_text(), foreground=("#e80" if self._stale else ""))
 
     def _on_change(self, _value: str) -> None:
+        self._stale = False
         self.app.set_parameter(self.group, self.name, int(float(self.var.get())))
         self._redraw()
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value)
+        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
 
     def set_raw_value(self, value: int) -> None:
         self.var.set(value)
+        self._stale = False
+        self._redraw()
+
+    def _on_read_failed(self) -> None:
+        self._stale = True
         self._redraw()
