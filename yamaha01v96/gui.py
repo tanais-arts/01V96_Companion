@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 from . import sysex, converters
 from .console import V2Console
@@ -145,6 +145,7 @@ class NameRow:
 
         row = ttk.Frame(parent)
         row.pack(fill="x", padx=4, pady=2)
+        self.frame = row
         ttk.Label(row, text=label, width=22, anchor="w").pack(side="left")
         self.var = tk.StringVar(value="")
         entry = ttk.Entry(row, textvariable=self.var, width=count + 2)
@@ -185,6 +186,8 @@ class App(tk.Tk):
         self.effect_var = tk.IntVar(value=1)
         self.rows: list[ParamRow | NameRow] = []
         self.channel_clipboard: dict[tuple[str, str], int] | None = None
+        self.strip_clipboard: dict[tuple[str, str], int] | None = None
+        self.strip_select_mode = False
         self.scene_title_var = tk.StringVar(value="")
 
         self._build_connection_bar()
@@ -287,8 +290,8 @@ class App(tk.Tk):
 
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=4, pady=(4, 0))
-        NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal", show_read_button=False)
-        ttk.Button(top, text="Tout lire", command=self.read_all).pack(anchor="w", pady=(2, 4))
+        name_row = NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal", show_read_button=False)
+        ttk.Button(name_row.frame, text="Tout lire", command=self.read_all).pack(side="left", padx=8)
 
         body = ttk.Frame(tab)
         body.pack(fill="both", expand=True, padx=4, pady=4)
@@ -298,6 +301,7 @@ class App(tk.Tk):
         self._build_strip_aux(body)
         self._build_strip_bus(body)
         self._build_strip_fader(body)
+        self._build_strip_copy_tools(body)
 
     def _build_strip_dynamics(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Dynamique")
@@ -383,6 +387,20 @@ class App(tk.Tk):
         Toggle(self, frame, "kInputPair", "kPair", "Paire").pack(pady=4)
         Knob(self, frame, "kInputChannelPan", "kChannelPan", "Pan").pack(pady=4)
         Fader(self, frame, "kInputFader", "kFader", "Niveau").pack(pady=4, fill="y", expand=True)
+
+    def _build_strip_copy_tools(self, parent: tk.Widget) -> None:
+        frame = ttk.LabelFrame(parent, text="Copier / Coller (tranche)")
+        frame.pack(side="left", fill="y", padx=3)
+        btns = ttk.Frame(frame)
+        btns.pack(pady=4)
+        ttk.Button(btns, text="COPY ALL", width=10, command=self._strip_copy_all).pack(side="left", padx=2)
+        self.strip_copy_sel_btn = ttk.Button(btns, text="COPY SEL.", width=10, command=self._strip_copy_sel_toggle)
+        self.strip_copy_sel_btn.pack(side="left", padx=2)
+        ttk.Button(btns, text="PASTE TO...", width=10, command=self._strip_paste_to).pack(side="left", padx=2)
+        self.strip_clipboard_label = ttk.Label(
+            frame, text="Presse-papiers tranche : vide", foreground="#666", wraplength=140,
+        )
+        self.strip_clipboard_label.pack(anchor="w", padx=2, pady=(2, 4))
 
     def _build_scene_tab(self, nb: ttk.Notebook) -> None:
         tab = ttk.Frame(nb)
@@ -737,8 +755,11 @@ class App(tk.Tk):
         return pairs
 
     def _read_channel(self, channel: int, include_name: bool) -> dict[tuple[str, str], int]:
+        return self._read_channel_params(channel, self._channel_param_defs(include_name))
+
+    def _read_channel_params(self, channel: int, defs: list[tuple[str, str]]) -> dict[tuple[str, str], int]:
         values: dict[tuple[str, str], int] = {}
-        for group, name in self._channel_param_defs(include_name):
+        for group, name in defs:
             try:
                 value = self.console.request_parameter(group, name, channel)
             except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
@@ -763,6 +784,110 @@ class App(tk.Tk):
         """If `channel` is the one currently shown, re-read its controls."""
         if self.channel_var.get() - 1 == channel:
             self.read_all()
+
+    # -- Tranche tab copy/paste (COPY ALL / COPY SEL. / PASTE TO) -----------
+    def _strip_param_defs(self) -> list[tuple[str, str]]:
+        """(group, name) pairs for every control on the Tranche tab, except
+        stereo pairing (kInputPair) which "COPY ALL" must not touch."""
+        seen: set[tuple[str, str]] = set()
+        pairs: list[tuple[str, str]] = []
+        for row in self.rows:
+            if not isinstance(row, (Knob, Toggle, EnumSelector, Fader)):
+                continue
+            if row.group == "kInputPair":
+                continue
+            key = (row.group, row.name)
+            if key not in seen:
+                seen.add(key)
+                pairs.append(key)
+        return pairs
+
+    def _strip_exit_select_mode(self, cancelled: bool = False) -> None:
+        if not self.strip_select_mode:
+            return
+        self.strip_select_mode = False
+        self.strip_copy_sel_btn.config(text="COPY SEL.")
+        for row in self.rows:
+            if isinstance(row, (Knob, Toggle)) and row.selected:
+                row.selected = False
+                row._redraw()
+        if cancelled:
+            self.log("Tranche : sélection annulée.")
+
+    def _strip_ask_destination_channel(self) -> int | None:
+        dst = simpledialog.askinteger(
+            "PASTE TO", "Canal destination (1-32) :", parent=self, minvalue=1, maxvalue=32,
+        )
+        return None if dst is None else dst - 1
+
+    def _strip_copy_all(self) -> None:
+        if self.console is None:
+            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
+            return
+        self._strip_exit_select_mode()
+        src = self.channel
+        values = self._read_channel_params(src, self._strip_param_defs())
+        if not values:
+            self.log("COPY ALL : annulé, aucune valeur lue (console absente ou simulation).")
+            return
+        self.strip_clipboard = values
+        self.strip_clipboard_label.config(
+            text=f"Presse-papiers tranche : canal {src + 1} ({len(values)} réglage(s), sans appairage)"
+        )
+        self.log(f"COPY ALL : {len(values)} réglage(s) du canal {src + 1} (hors appairage).")
+
+    def _strip_copy_sel_toggle(self) -> None:
+        if self.console is None:
+            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
+            return
+        if self.strip_select_mode:
+            self._strip_exit_select_mode(cancelled=True)
+            return
+        self.strip_clipboard = None
+        self.strip_clipboard_label.config(text="Presse-papiers tranche : vide")
+        self.strip_select_mode = True
+        self.strip_copy_sel_btn.config(text="Annuler la sélection")
+        self.log(
+            "COPY SEL. : cliquez sur les boutons rotatifs/interrupteurs à copier (ils passent en rouge), "
+            "re-cliquez pour désélectionner, puis PASTE TO... pour confirmer."
+        )
+
+    def _strip_paste_to(self) -> None:
+        if self.console is None:
+            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
+            return
+
+        if self.strip_select_mode:
+            selected_defs = [
+                (row.group, row.name) for row in self.rows
+                if isinstance(row, (Knob, Toggle)) and row.selected
+            ]
+            if not selected_defs:
+                messagebox.showerror("PASTE TO", "Aucun réglage sélectionné (COPY SEL.).")
+                return
+            src = self.channel
+            dst = self._strip_ask_destination_channel()
+            if dst is None:
+                return
+            if dst == src:
+                messagebox.showerror("PASTE TO", "Le canal destination doit être différent du canal affiché.")
+                return
+            values = self._read_channel_params(src, selected_defs)
+            count = self._write_channel(dst, values)
+            self.log(f"PASTE TO (sélection) : {count}/{len(selected_defs)} réglage(s) canal {src + 1} -> canal {dst + 1}.")
+            self._strip_exit_select_mode()
+            self._refresh_if_visible(dst)
+            return
+
+        if not self.strip_clipboard:
+            messagebox.showerror("PASTE TO", "Rien à coller : utilisez COPY ALL ou COPY SEL. d'abord.")
+            return
+        dst = self._strip_ask_destination_channel()
+        if dst is None:
+            return
+        count = self._write_channel(dst, self.strip_clipboard)
+        self.log(f"PASTE TO : {count} réglage(s) collé(s) sur le canal {dst + 1}.")
+        self._refresh_if_visible(dst)
 
     def _copy_paste_channel(self) -> None:
         if self.console is None:

@@ -43,6 +43,7 @@ class Knob(tk.Frame):
         self.pd: ParamDef = app.params.get(group, name)
         self.value = self.pd.default
         self._stale = False
+        self.selected = False
         self._drag_start_y: int | None = None
         self._drag_start_value: int | None = None
 
@@ -71,7 +72,9 @@ class Knob(tk.Frame):
         c.delete("all")
         s = self.SIZE
         pad = 3
-        c.create_oval(pad, pad, s - pad, s - pad, fill="#e0e0e0", outline="#888")
+        fill = "#e33" if self.selected else "#e0e0e0"
+        outline = "#a00" if self.selected else "#888"
+        c.create_oval(pad, pad, s - pad, s - pad, fill=fill, outline=outline, width=(2 if self.selected else 1))
         angle = self._angle_for(self.value)
         cx, cy, r = s / 2, s / 2, s / 2 - pad - 3
         c.create_line(
@@ -85,6 +88,10 @@ class Knob(tk.Frame):
         return converted if converted is not None else str(self.value)
 
     def _on_press(self, event: tk.Event) -> None:
+        if self.app.strip_select_mode:
+            self.selected = not self.selected
+            self._redraw()
+            return
         self._drag_start_y = event.y
         self._drag_start_value = self.value
 
@@ -99,6 +106,8 @@ class Knob(tk.Frame):
         self._nudge(1 if event.delta > 0 else -1)
 
     def _nudge(self, direction: int) -> None:
+        if self.app.strip_select_mode:
+            return
         self._set_value(self.value + direction)
 
     def _set_value(self, value: int) -> None:
@@ -134,6 +143,7 @@ class Toggle(tk.Frame):
         self.pd: ParamDef = app.params.get(group, name)
         self.value = self.pd.default
         self._stale = False
+        self.selected = False
 
         ttk.Label(self, text=label, font=("", 8), anchor="center").pack()
         self.canvas = tk.Canvas(self, width=32, height=18, highlightthickness=0)
@@ -146,11 +156,18 @@ class Toggle(tk.Frame):
     def _redraw(self) -> None:
         c = self.canvas
         c.delete("all")
+        if self.selected:
+            c.create_rectangle(1, 1, 31, 17, fill="#e33", outline="#a00", width=2)
+            return
         on = self.value >= self.pd.max
         outline, width = ("#e80", 2) if self._stale else ("#222", 1)
         c.create_rectangle(1, 1, 31, 17, fill=("#2a2" if on else "#555"), outline=outline, width=width)
 
     def _on_click(self, _event: tk.Event) -> None:
+        if self.app.strip_select_mode:
+            self.selected = not self.selected
+            self._redraw()
+            return
         self.value = self.pd.min if self.value >= self.pd.max else self.pd.max
         self._stale = False
         self._redraw()
