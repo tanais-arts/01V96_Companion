@@ -18,7 +18,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-from . import sysex
+from . import sysex, converters
 from .console import V2Console
 from .midi import MidiConsole, list_ports
 from .params import ParameterMap, ParamDef
@@ -88,17 +88,26 @@ class ParamRow:
                 variable=self.var, command=lambda v: self._on_scale(v),
             )
             scale.pack(side="left", fill="x", expand=True)
-            self.value_label = ttk.Label(row, text=str(self.pd.default), width=6)
+            self.value_label = ttk.Label(row, text=self._display_text(self.pd.default), width=16)
             self.value_label.pack(side="left")
 
-        if self.pd.comment:
+        # Only show the raw "PRM TABLE #NN" comment when we have no real
+        # unit conversion for this parameter (converted values already show
+        # the raw index alongside, see _display_text).
+        if self.pd.comment and hasattr(self, "value_label") and converters.raw_to_display(self.pd, self.pd.default) is None:
+            ttk.Label(row, text=self.pd.comment, foreground="#666").pack(side="left", padx=6)
+        elif self.pd.comment and not hasattr(self, "value_label"):
             ttk.Label(row, text=self.pd.comment, foreground="#666").pack(side="left", padx=6)
 
         ttk.Button(row, text="Lire", width=6, command=self.get_value).pack(side="right")
         app.rows.append(self)
 
+    def _display_text(self, raw: int) -> str:
+        converted = converters.raw_to_display(self.pd, raw)
+        return f"{converted} (brut {raw})" if converted is not None else str(raw)
+
     def _on_scale(self, _value) -> None:
-        self.value_label.config(text=str(int(float(self.var.get()))))
+        self.value_label.config(text=self._display_text(int(float(self.var.get()))))
         self._on_change()
 
     def _raw_value(self) -> int:
@@ -115,7 +124,7 @@ class ParamRow:
         else:
             self.var.set(value)
             if hasattr(self, "value_label"):
-                self.value_label.config(text=str(value))
+                self.value_label.config(text=self._display_text(value))
 
     def get_value(self) -> None:
         self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value)
