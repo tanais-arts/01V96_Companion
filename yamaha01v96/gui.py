@@ -309,28 +309,51 @@ class App(tk.Tk):
 
         gate = ttk.Frame(frame)
         gate.pack(pady=4)
-        ttk.Label(gate, text="GATE", font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
-        Toggle(self, gate, "kInputGate", "kGateOn", "On").grid(row=1, column=0, padx=2)
-        EnumSelector(self, gate, "kInputGate", "kGateType", "Type").grid(row=1, column=1, columnspan=2, padx=2)
-        Knob(self, gate, "kInputGate", "kGateThreshold", "Seuil").grid(row=2, column=0, padx=2, pady=2)
-        Knob(self, gate, "kInputGate", "kGateRange", "Range").grid(row=2, column=1, padx=2, pady=2)
-        Knob(self, gate, "kInputGate", "kGateAttack", "Atk").grid(row=2, column=2, padx=2, pady=2)
-        Knob(self, gate, "kInputGate", "kGateHold", "Hold").grid(row=3, column=0, padx=2, pady=2)
-        Knob(self, gate, "kInputGate", "kGateDecay", "Decay").grid(row=3, column=1, padx=2, pady=2)
+        gate_label = ttk.Label(gate, text="GATE", font=("", 9, "bold"))
+        gate_label.grid(row=0, column=0, columnspan=3, pady=(0, 2))
+        gate_on = Toggle(self, gate, "kInputGate", "kGateOn", "On")
+        gate_on.grid(row=1, column=0, padx=2)
+        gate_type = EnumSelector(self, gate, "kInputGate", "kGateType", "Type")
+        gate_type.grid(row=1, column=1, columnspan=2, padx=2)
+        gate_thr = Knob(self, gate, "kInputGate", "kGateThreshold", "Seuil")
+        gate_thr.grid(row=2, column=0, padx=2, pady=2)
+        gate_range = Knob(self, gate, "kInputGate", "kGateRange", "Range")
+        gate_range.grid(row=2, column=1, padx=2, pady=2)
+        gate_atk = Knob(self, gate, "kInputGate", "kGateAttack", "Atk")
+        gate_atk.grid(row=2, column=2, padx=2, pady=2)
+        gate_hold = Knob(self, gate, "kInputGate", "kGateHold", "Hold")
+        gate_hold.grid(row=3, column=0, padx=2, pady=2)
+        gate_decay = Knob(self, gate, "kInputGate", "kGateDecay", "Decay")
+        gate_decay.grid(row=3, column=1, padx=2, pady=2)
+        self._bind_section_select(
+            gate_label, [gate_on, gate_type, gate_thr, gate_range, gate_atk, gate_hold, gate_decay],
+        )
 
         ttk.Separator(frame).pack(fill="x", pady=6)
 
         comp = ttk.Frame(frame)
         comp.pack(pady=4)
-        ttk.Label(comp, text="COMP", font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
-        Toggle(self, comp, "kInputComp", "kCompOn", "On").grid(row=1, column=0, padx=2)
-        EnumSelector(self, comp, "kInputComp", "kCompType", "Type").grid(row=1, column=1, columnspan=2, padx=2)
-        Knob(self, comp, "kInputComp", "kCompThreshold", "Seuil").grid(row=2, column=0, padx=2, pady=2)
-        Knob(self, comp, "kInputComp", "kCompRatio", "Ratio").grid(row=2, column=1, padx=2, pady=2)
-        Knob(self, comp, "kInputComp", "kCompAttack", "Atk").grid(row=2, column=2, padx=2, pady=2)
-        Knob(self, comp, "kInputComp", "kCompRelease", "Rel").grid(row=3, column=0, padx=2, pady=2)
-        Knob(self, comp, "kInputComp", "kCompKnee", "Knee").grid(row=3, column=1, padx=2, pady=2)
-        Knob(self, comp, "kInputComp", "kCompGain", "Gain").grid(row=3, column=2, padx=2, pady=2)
+        comp_label = ttk.Label(comp, text="COMP", font=("", 9, "bold"))
+        comp_label.grid(row=0, column=0, columnspan=3, pady=(0, 2))
+        comp_on = Toggle(self, comp, "kInputComp", "kCompOn", "On")
+        comp_on.grid(row=1, column=0, padx=2)
+        comp_type = EnumSelector(self, comp, "kInputComp", "kCompType", "Type")
+        comp_type.grid(row=1, column=1, columnspan=2, padx=2)
+        comp_thr = Knob(self, comp, "kInputComp", "kCompThreshold", "Seuil")
+        comp_thr.grid(row=2, column=0, padx=2, pady=2)
+        comp_ratio = Knob(self, comp, "kInputComp", "kCompRatio", "Ratio")
+        comp_ratio.grid(row=2, column=1, padx=2, pady=2)
+        comp_atk = Knob(self, comp, "kInputComp", "kCompAttack", "Atk")
+        comp_atk.grid(row=2, column=2, padx=2, pady=2)
+        comp_rel = Knob(self, comp, "kInputComp", "kCompRelease", "Rel")
+        comp_rel.grid(row=3, column=0, padx=2, pady=2)
+        comp_knee = Knob(self, comp, "kInputComp", "kCompKnee", "Knee")
+        comp_knee.grid(row=3, column=1, padx=2, pady=2)
+        comp_gain = Knob(self, comp, "kInputComp", "kCompGain", "Gain")
+        comp_gain.grid(row=3, column=2, padx=2, pady=2)
+        self._bind_section_select(
+            comp_label, [comp_on, comp_type, comp_thr, comp_ratio, comp_atk, comp_rel, comp_knee, comp_gain],
+        )
 
     def _build_strip_eq(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="EQ")
@@ -346,10 +369,15 @@ class App(tk.Tk):
             ttk.Separator(frame).pack(fill="x", pady=4)
             section = ttk.Frame(frame)
             section.pack(pady=2)
-            ttk.Label(section, text=label, font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
-            Knob(self, section, "kInputEQ", f"kEQ{band}G", "Gain").grid(row=1, column=0, padx=2)
-            Knob(self, section, "kInputEQ", f"kEQ{band}F", "Freq").grid(row=1, column=1, padx=2)
-            Knob(self, section, "kInputEQ", f"kEQ{band}Q", "Q").grid(row=1, column=2, padx=2)
+            band_label = ttk.Label(section, text=label, font=("", 9, "bold"))
+            band_label.grid(row=0, column=0, columnspan=3, pady=(0, 2))
+            gain_knob = Knob(self, section, "kInputEQ", f"kEQ{band}G", "Gain")
+            gain_knob.grid(row=1, column=0, padx=2)
+            freq_knob = Knob(self, section, "kInputEQ", f"kEQ{band}F", "Freq")
+            freq_knob.grid(row=1, column=1, padx=2)
+            q_knob = Knob(self, section, "kInputEQ", f"kEQ{band}Q", "Q")
+            q_knob.grid(row=1, column=2, padx=2)
+            self._bind_section_select(band_label, [gain_knob, freq_knob, q_knob])
 
     def _build_strip_aux(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Envois AUX")
@@ -786,6 +814,20 @@ class App(tk.Tk):
             self.read_all()
 
     # -- Tranche tab copy/paste (COPY ALL / COPY SEL. / PASTE TO) -----------
+    def _bind_section_select(self, label: tk.Widget, members: list) -> None:
+        """While COPY SEL. is active, clicking a section title (GATE, COMP,
+        GRAVE...) selects/deselects every control of that section at once,
+        instead of clicking each knob/toggle individually."""
+        def on_click(_event: tk.Event) -> None:
+            if not self.strip_select_mode:
+                return
+            want = not all(w.selected for w in members)
+            for w in members:
+                w.selected = want
+                w._redraw()
+            label.config(foreground="#c00" if want else "")
+        label.bind("<Button-1>", on_click)
+
     def _strip_param_defs(self) -> list[tuple[str, str]]:
         """(group, name) pairs for every control on the Tranche tab, except
         stereo pairing (kInputPair) which "COPY ALL" must not touch."""
@@ -808,7 +850,7 @@ class App(tk.Tk):
         self.strip_select_mode = False
         self.strip_copy_sel_btn.config(text="COPY SEL.")
         for row in self.rows:
-            if isinstance(row, (Knob, Toggle)) and row.selected:
+            if isinstance(row, (Knob, Toggle, EnumSelector, Fader)) and row.selected:
                 row.selected = False
                 row._redraw()
         if cancelled:
@@ -848,8 +890,9 @@ class App(tk.Tk):
         self.strip_select_mode = True
         self.strip_copy_sel_btn.config(text="Annuler la sélection")
         self.log(
-            "COPY SEL. : cliquez sur les boutons rotatifs/interrupteurs à copier (ils passent en rouge), "
-            "re-cliquez pour désélectionner, puis PASTE TO... pour confirmer."
+            "COPY SEL. : cliquez sur un contrôle (knob, interrupteur, type, fader) ou sur un titre de "
+            "section (GATE, COMP, GRAVE...) pour le/la sélectionner (rouge), re-cliquez pour désélectionner, "
+            "puis PASTE TO... pour confirmer."
         )
 
     def _strip_paste_to(self) -> None:
@@ -860,7 +903,7 @@ class App(tk.Tk):
         if self.strip_select_mode:
             selected_defs = [
                 (row.group, row.name) for row in self.rows
-                if isinstance(row, (Knob, Toggle)) and row.selected
+                if isinstance(row, (Knob, Toggle, EnumSelector, Fader)) and row.selected
             ]
             if not selected_defs:
                 messagebox.showerror("PASTE TO", "Aucun réglage sélectionné (COPY SEL.).")

@@ -197,13 +197,26 @@ class EnumSelector(tk.Frame):
         self.pd: ParamDef = app.params.get(group, name)
         self.labels = _enum_options(self.pd) or [str(v) for v in range(self.pd.min, self.pd.max + 1)]
         self.var = tk.StringVar(value=self.labels[self.pd.default - self.pd.min])
+        self.selected = False
 
-        ttk.Label(self, text=label, font=("", 8), anchor="center").pack()
+        self.label = ttk.Label(self, text=label, font=("", 8), anchor="center")
+        self.label.pack()
         combo = ttk.Combobox(self, textvariable=self.var, values=self.labels, state="readonly", width=9)
         combo.pack()
         combo.bind("<<ComboboxSelected>>", lambda _e: self._on_change())
+        combo.bind("<Button-1>", self._on_combo_click)
 
         app.rows.append(self)
+
+    def _on_combo_click(self, _event: tk.Event) -> str | None:
+        if self.app.strip_select_mode:
+            self.selected = not self.selected
+            self._redraw()
+            return "break"
+        return None
+
+    def _redraw(self) -> None:
+        self.label.config(foreground="#c00" if self.selected else "")
 
     def _on_change(self) -> None:
         value = self.pd.min + self.labels.index(self.var.get())
@@ -229,13 +242,17 @@ class Fader(tk.Frame):
         self.name = name
         self.pd: ParamDef = app.params.get(group, name)
         self.var = tk.IntVar(value=self.pd.default)
+        self.selected = False
 
-        ttk.Label(self, text=label, font=("", 9, "bold"), anchor="center").pack()
+        self.title_label = ttk.Label(self, text=label, font=("", 9, "bold"), anchor="center")
+        self.title_label.pack()
         # from_ at the top (max = loudest), to at the bottom (min = quietest).
-        ttk.Scale(
+        self.scale = ttk.Scale(
             self, from_=self.pd.max, to=self.pd.min, orient="vertical",
             variable=self.var, length=length, command=self._on_change,
-        ).pack()
+        )
+        self.scale.pack()
+        self.scale.bind("<Button-1>", self._on_scale_click)
         self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=10)
         self.value_label.pack()
 
@@ -243,12 +260,20 @@ class Fader(tk.Frame):
         self._redraw()
         app.rows.append(self)
 
+    def _on_scale_click(self, _event: tk.Event) -> str | None:
+        if self.app.strip_select_mode:
+            self.selected = not self.selected
+            self._redraw()
+            return "break"
+        return None
+
     def _display_text(self) -> str:
         converted = converters.raw_to_display(self.pd, self.var.get())
         return converted if converted is not None else str(self.var.get())
 
     def _redraw(self) -> None:
         self.value_label.config(text=self._display_text(), foreground=("#e80" if self._stale else ""))
+        self.title_label.config(foreground=("#c00" if self.selected else ""))
 
     def _on_change(self, _value: str) -> None:
         self._stale = False
