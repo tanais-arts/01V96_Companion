@@ -104,7 +104,7 @@ class ParamRow:
 
     def _display_text(self, raw: int) -> str:
         converted = converters.raw_to_display(self.pd, raw)
-        return f"{converted} (brut {raw})" if converted is not None else str(raw)
+        return converted if converted is not None else str(raw)
 
     def _on_scale(self, _value) -> None:
         self.value_label.config(text=self._display_text(int(float(self.var.get()))))
