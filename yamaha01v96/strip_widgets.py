@@ -51,7 +51,6 @@ class Knob(tk.Frame):
         self.canvas.pack()
         self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=8)
         self.value_label.pack()
-        ttk.Button(self, text="R", width=2, command=self.get_value).pack(pady=(1, 0))
 
         self.canvas.bind("<Button-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
@@ -140,7 +139,6 @@ class Toggle(tk.Frame):
         self.canvas = tk.Canvas(self, width=32, height=18, highlightthickness=0)
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self._on_click)
-        ttk.Button(self, text="R", width=2, command=self.get_value).pack(pady=(1, 0))
 
         self._redraw()
         app.rows.append(self)
@@ -187,7 +185,6 @@ class EnumSelector(tk.Frame):
         combo = ttk.Combobox(self, textvariable=self.var, values=self.labels, state="readonly", width=9)
         combo.pack()
         combo.bind("<<ComboboxSelected>>", lambda _e: self._on_change())
-        ttk.Button(self, text="R", width=2, command=self.get_value).pack(pady=(1, 0))
 
         app.rows.append(self)
 
@@ -224,7 +221,6 @@ class Fader(tk.Frame):
         ).pack()
         self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=10)
         self.value_label.pack()
-        ttk.Button(self, text="Lire", width=6, command=self.get_value).pack(pady=(2, 0))
 
         self._stale = False
         self._redraw()
