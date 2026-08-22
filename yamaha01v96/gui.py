@@ -188,6 +188,8 @@ class App(tk.Tk):
         self.strip_clipboard: dict[tuple[str, str], int] | None = None
         self.strip_select_mode = False
         self.scene_title_var = tk.StringVar(value="")
+        self._strip_read_after_id: str | None = None
+        self._channel_cache: dict[int, dict[tuple[str, str], int]] = {}
 
         self._build_connection_bar()
         self._build_channel_bar()
@@ -242,6 +244,7 @@ class App(tk.Tk):
             messagebox.showerror("Connexion MIDI", str(exc))
             return
         self.connect_btn.config(text="Déconnecter")
+        self._run_full_recall()
 
     def _on_close(self) -> None:
         if self.console is not None:
@@ -272,6 +275,7 @@ class App(tk.Tk):
 
         self._build_mix_tab(nb)
         self._build_strip_tab(nb)
+        self._build_master_tab(nb)
         self._build_scene_tab(nb)
         self._build_backup_tab(nb)
         self._build_routing_tab(nb)
@@ -346,6 +350,11 @@ class App(tk.Tk):
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=4, pady=(4, 0))
         name_row = NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal", show_read_button=False)
+        self.strip_name_row = name_row
+        self.strip_channel_label_var = tk.StringVar()
+        ttk.Label(name_row.frame, textvariable=self.strip_channel_label_var, font=("", 10, "bold")).pack(side="left", padx=(8, 0))
+        self._update_strip_channel_label()
+        self.channel_var.trace_add("write", lambda *_a: self._on_channel_var_changed())
         ttk.Button(name_row.frame, text="◀", width=3, command=lambda: self._strip_shift_channel(-1)).pack(side="left", padx=(8, 2))
         ttk.Button(name_row.frame, text="▶", width=3, command=lambda: self._strip_shift_channel(1)).pack(side="left")
         ttk.Button(name_row.frame, text="Tout lire", command=self.read_all).pack(side="left", padx=8)
@@ -362,11 +371,49 @@ class App(tk.Tk):
         self._build_strip_copy_tools(body)
 
     def _strip_shift_channel(self, delta: int) -> None:
-        """◀/▶ sur la ligne NOM : change juste le canal affiché puis relit
-        tout (équivalent à choisir le canal dans le sélecteur + "Tout lire",
-        y compris le nom - déjà inclus dans read_all() via NameRow)."""
+        """◀/▶ sur la ligne NOM : change juste le canal affiché - le
+        reste (affichage instantané depuis le cache, ou lecture MIDI en
+        secours) est géré par le trace sur channel_var."""
         self.channel_var.set(((self.channel_var.get() - 1 + delta) % 32) + 1)
+
+    def _on_channel_var_changed(self) -> None:
+        self._update_strip_channel_label()
+        if self.channel in self._channel_cache:
+            self._apply_channel_cache(self.channel)
+        else:
+            self._schedule_strip_read()
+
+    def _schedule_strip_read(self) -> None:
+        if self._strip_read_after_id is not None:
+            self.after_cancel(self._strip_read_after_id)
+        self._strip_read_after_id = self.after(1000, self._strip_read_now)
+
+    def _strip_read_now(self) -> None:
+        self._strip_read_after_id = None
         self.read_all()
+
+    def _update_strip_channel_label(self) -> None:
+        self.strip_channel_label_var.set(f"N°{self.channel_var.get()}")
+
+    def _apply_channel_cache(self, channel: int) -> None:
+        """Affiche instantanément (sans MIDI) les valeurs déjà lues par le
+        total recall pour ce canal - c'est ce qui rend la navigation rapide
+        une fois le chargement initial terminé."""
+        values = self._channel_cache.get(channel)
+        if values is None:
+            return
+        for row in self.rows:
+            if isinstance(row, (Knob, Toggle, Fader)) and row.channel is not None:
+                continue  # onglet MIX : canal fixe, pas le canal affiché ici
+            if isinstance(row, (Knob, Toggle, EnumSelector, Fader)):
+                value = values.get((row.group, row.name))
+                if value is not None:
+                    row.set_raw_value(value)
+        chars = []
+        for i in range(1, 17):
+            v = values.get(("kInputChannelName", f"kChannelNameLong{i}"))
+            chars.append(chr(v) if v is not None and 32 <= v < 127 else " ")
+        self.strip_name_row.var.set("".join(chars).rstrip())
 
     def _build_strip_dynamics(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Dynamique")
@@ -489,6 +536,62 @@ class App(tk.Tk):
         frame.pack(side="left", fill="y", padx=3)
         Toggle(self, frame, "kStereoChannelOn", "kChannelOn", "On").pack(pady=4)
         Fader(self, frame, "kStereoFader", "kFader", "Master", length=200).pack(pady=4)
+
+    def _build_master_tab(self, nb: ttk.Notebook) -> None:
+        """Section de traitement du bus stéréo (MASTER) : compresseur, EQ
+        4 bandes, insert, balance, delay, atténuateur - comme pour un canal
+        d'entrée, mais toujours sur le canal 0 (voir _channel_for), donc
+        indépendante du canal affiché sur l'onglet Tranche."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Master")
+        body = ttk.Frame(tab)
+        body.pack(fill="both", expand=True, padx=4, pady=4)
+
+        comp = ttk.LabelFrame(body, text="Compresseur")
+        comp.pack(side="left", fill="y", padx=3)
+        top = ttk.Frame(comp)
+        top.pack(pady=4)
+        Toggle(self, top, "kStereoComp", "kCompOn", "On").grid(row=0, column=0, padx=2)
+        EnumSelector(self, top, "kStereoComp", "kCompType", "Type").grid(row=0, column=1, columnspan=2, padx=2)
+        grid = ttk.Frame(comp)
+        grid.pack(pady=2)
+        Knob(self, grid, "kStereoComp", "kCompThreshold", "Seuil").grid(row=0, column=0, padx=2, pady=2)
+        Knob(self, grid, "kStereoComp", "kCompRatio", "Ratio").grid(row=0, column=1, padx=2, pady=2)
+        Knob(self, grid, "kStereoComp", "kCompAttack", "Atk").grid(row=0, column=2, padx=2, pady=2)
+        Knob(self, grid, "kStereoComp", "kCompRelease", "Rel").grid(row=1, column=0, padx=2, pady=2)
+        Knob(self, grid, "kStereoComp", "kCompKnee", "Knee").grid(row=1, column=1, padx=2, pady=2)
+        Knob(self, grid, "kStereoComp", "kCompGain", "Gain").grid(row=1, column=2, padx=2, pady=2)
+        EnumSelector(self, comp, "kStereoComp", "kCompLocComp", "Position").pack(pady=4)
+
+        eq = ttk.LabelFrame(body, text="EQ")
+        eq.pack(side="left", fill="y", padx=3)
+        top = ttk.Frame(eq)
+        top.pack(pady=4)
+        Toggle(self, top, "kStereoEQ", "kEQOn", "EQ On").grid(row=0, column=0, padx=2)
+        Toggle(self, top, "kStereoEQ", "kEQHPFOn", "HPF").grid(row=0, column=1, padx=2)
+        Toggle(self, top, "kStereoEQ", "kEQLPFOn", "LPF").grid(row=0, column=2, padx=2)
+        EnumSelector(self, eq, "kStereoEQ", "kEQMode", "Mode").pack(pady=2)
+        for band, label in [("Low", "GRAVE"), ("LowMid", "BAS-MED"), ("HiMid", "HAUT-MED"), ("Hi", "AIGU")]:
+            ttk.Separator(eq).pack(fill="x", pady=4)
+            section = ttk.Frame(eq)
+            section.pack(pady=2)
+            ttk.Label(section, text=label, font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
+            Knob(self, section, "kStereoEQ", f"kEQ{band}G", "Gain").grid(row=1, column=0, padx=2)
+            Knob(self, section, "kStereoEQ", f"kEQ{band}F", "Freq").grid(row=1, column=1, padx=2)
+            Knob(self, section, "kStereoEQ", f"kEQ{band}Q", "Q").grid(row=1, column=2, padx=2)
+
+        other = ttk.LabelFrame(body, text="Autres")
+        other.pack(side="left", fill="y", padx=3)
+        Knob(self, other, "kStereoBalance", "kBalance", "Balance").pack(pady=4)
+        ttk.Separator(other).pack(fill="x", pady=4)
+        Toggle(self, other, "kStereoInsert", "kInsertOn", "Insert On").pack(pady=4)
+        EnumSelector(self, other, "kStereoInsert", "kInsertLocInsert", "Position").pack(pady=2)
+        EnumSelector(self, other, "kStereoInsert", "kInsertLocInsertFirst", "Ordre").pack(pady=2)
+        ttk.Separator(other).pack(fill="x", pady=4)
+        Toggle(self, other, "kStereoDelay", "kOutDelayOn", "Delay On").pack(pady=4)
+        Knob(self, other, "kStereoDelay", "kOutDelayTime", "Temps").pack(pady=4)
+        ttk.Separator(other).pack(fill="x", pady=4)
+        Knob(self, other, "kStereoAttenuator", "kAtt", "Atten.").pack(pady=4)
 
     def _build_strip_copy_tools(self, parent: tk.Widget) -> None:
         frame = ttk.LabelFrame(parent, text="Copier / Coller (tranche)")
@@ -756,6 +859,70 @@ class App(tk.Tk):
         for row in self.rows:
             row.get_value()
         self.log("Tout lire : terminé.")
+
+    def _show_progress_dialog(self, total: int, title: str) -> tuple[tk.Toplevel, ttk.Progressbar, ttk.Label]:
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)  # pas d'annulation en cours de route
+        label = ttk.Label(dialog, text="Démarrage…", width=50, anchor="w")
+        label.pack(padx=16, pady=(16, 8))
+        bar = ttk.Progressbar(dialog, orient="horizontal", length=400, mode="determinate", maximum=max(total, 1))
+        bar.pack(padx=16, pady=(0, 16))
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - dialog.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dialog.lift(self)
+        dialog.attributes("-topmost", True)
+        dialog.focus_force()
+        dialog.grab_set()
+        return dialog, bar, label
+
+    def _run_full_recall(self) -> None:
+        """Total recall au démarrage/à la connexion : lit tous les canaux
+        (1-32) de la Tranche, plus tous les autres contrôles de l'appli, en
+        affichant une boîte de progression qui se ferme une fois terminé.
+        Une fois en cache, naviguer entre canaux (Tranche) est instantané
+        et "Tout lire/Lire" ne sert plus qu'à resynchroniser manuellement."""
+        if self.console is None:
+            return
+        strip_defs = self._strip_param_defs()
+        name_defs = [("kInputChannelName", f"kChannelNameLong{i}") for i in range(1, 17)]
+        full_defs = strip_defs + name_defs
+        total = 32 * len(full_defs) + len(self.rows)
+        dialog, bar, label = self._show_progress_dialog(total, "Lecture totale de la console")
+        done = 0
+        try:
+            for ch in range(32):
+                label.config(text=f"Tranche : canal {ch + 1}/32…")
+                values: dict[tuple[str, str], int] = {}
+                for group, name in full_defs:
+                    try:
+                        value = self.console.request_parameter(group, name, ch)
+                    except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
+                        self.log(f"Erreur lecture {group}.{name} (canal {ch + 1}) : {exc}")
+                        value = None
+                    if value is not None:
+                        values[(group, name)] = value
+                    done += 1
+                    bar["value"] = done
+                    dialog.update_idletasks()
+                self._channel_cache[ch] = values
+
+            label.config(text="Scène, routing, effets, MIX…")
+            for row in self.rows:
+                row.get_value()
+                done += 1
+                bar["value"] = done
+                dialog.update_idletasks()
+        finally:
+            dialog.grab_release()
+            dialog.destroy()
+
+        self._apply_channel_cache(self.channel)
+        self.log("Lecture totale (total recall) terminée : toutes les données sont en mémoire.")
 
     # -- channel strip copy/paste, routed through self.console --------------
     def _read_channel_params(self, channel: int, defs: list[tuple[str, str]]) -> dict[tuple[str, str], int]:
