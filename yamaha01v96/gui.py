@@ -298,28 +298,31 @@ class App(tk.Tk):
         canvas.create_window((0, 0), window=inner, anchor="nw")
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
 
+        s = 0.5  # taille réduite de moitié pour faire tenir 32 tranches + AUX + MASTER
+        fader_len = 80
+
         for ch in range(32):
             strip = ttk.LabelFrame(inner, text=str(ch + 1))
             strip.pack(side="left", fill="y", padx=1, pady=2)
-            MixName(self, strip, ch).pack(pady=(2, 4))
-            Knob(self, strip, "kInputChannelPan", "kChannelPan", "Pan", channel=ch).pack()
-            Toggle(self, strip, "kInputChannelOn", "kChannelOn", "On", channel=ch).pack(pady=4)
-            Fader(self, strip, "kInputFader", "kFader", "", length=160, channel=ch).pack()
+            MixName(self, strip, ch, ui_scale=s).pack(pady=(2, 4))
+            Knob(self, strip, "kInputChannelPan", "kChannelPan", "Pan", channel=ch, ui_scale=s).pack()
+            Toggle(self, strip, "kInputChannelOn", "kChannelOn", "On", channel=ch, ui_scale=s).pack(pady=4)
+            Fader(self, strip, "kInputFader", "kFader", "", length=fader_len, channel=ch, ui_scale=s).pack()
 
         ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
 
         for a in range(8):
             strip = ttk.LabelFrame(inner, text=f"AUX {a + 1}")
             strip.pack(side="left", fill="y", padx=1, pady=2)
-            Toggle(self, strip, "kAUXChannelOn", "kChannelOn", "On", channel=a).pack(pady=(28, 4))
-            Fader(self, strip, "kAUXFader", "kFader", "", length=160, channel=a).pack()
+            Toggle(self, strip, "kAUXChannelOn", "kChannelOn", "On", channel=a, ui_scale=s).pack(pady=(28, 4))
+            Fader(self, strip, "kAUXFader", "kFader", "", length=fader_len, channel=a, ui_scale=s).pack()
 
         ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
 
         master = ttk.LabelFrame(inner, text="MASTER")
         master.pack(side="left", fill="y", padx=1, pady=2)
-        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On").pack(pady=(28, 4))
-        Fader(self, master, "kStereoFader", "kFader", "", length=160).pack()
+        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On", ui_scale=s).pack(pady=(28, 4))
+        Fader(self, master, "kStereoFader", "kFader", "", length=fader_len, ui_scale=s).pack()
 
     def _build_strip_tab(self, nb: ttk.Notebook) -> None:
         """One-window channel-strip overview (knobs/toggles), à la console

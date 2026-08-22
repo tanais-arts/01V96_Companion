@@ -35,7 +35,7 @@ class Knob(tk.Frame):
     SWEEP_DEG = 270
     SENSITIVITY = 150  # pixels of vertical drag needed to cover the full range
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, channel: int | None = None):
+    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, channel: int | None = None, ui_scale: float = 1.0):
         super().__init__(parent)
         self.app = app
         self.group = group
@@ -47,11 +47,13 @@ class Knob(tk.Frame):
         self.selected = False
         self._drag_start_y: int | None = None
         self._drag_start_value: int | None = None
+        self.size = round(self.SIZE * ui_scale)
+        font_size = max(1, round(8 * ui_scale))
 
-        ttk.Label(self, text=label, font=("", 8), anchor="center").pack()
-        self.canvas = tk.Canvas(self, width=self.SIZE, height=self.SIZE, highlightthickness=0)
+        ttk.Label(self, text=label, font=("", font_size), anchor="center").pack()
+        self.canvas = tk.Canvas(self, width=self.size, height=self.size, highlightthickness=0)
         self.canvas.pack()
-        self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=8)
+        self.value_label = ttk.Label(self, text="", font=("", font_size), anchor="center", width=8)
         self.value_label.pack()
 
         self.canvas.bind("<Button-1>", self._on_press)
@@ -71,7 +73,7 @@ class Knob(tk.Frame):
     def _redraw(self) -> None:
         c = self.canvas
         c.delete("all")
-        s = self.SIZE
+        s = self.size
         pad = 3
         fill = "#e33" if self.selected else "#e0e0e0"
         outline = "#a00" if self.selected else "#888"
@@ -138,7 +140,7 @@ class Knob(tk.Frame):
 class Toggle(tk.Frame):
     """LED-style square button bound to a boolean (min=0, max=1) ParamDef."""
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, channel: int | None = None):
+    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, channel: int | None = None, ui_scale: float = 1.0):
         super().__init__(parent)
         self.app = app
         self.group = group
@@ -148,9 +150,12 @@ class Toggle(tk.Frame):
         self.value = self.pd.default
         self._stale = False
         self.selected = False
+        self._tw = round(32 * ui_scale)
+        self._th = round(18 * ui_scale)
+        font_size = max(1, round(8 * ui_scale))
 
-        ttk.Label(self, text=label, font=("", 8), anchor="center").pack()
-        self.canvas = tk.Canvas(self, width=32, height=18, highlightthickness=0)
+        ttk.Label(self, text=label, font=("", font_size), anchor="center").pack()
+        self.canvas = tk.Canvas(self, width=self._tw, height=self._th, highlightthickness=0)
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self._on_click)
 
@@ -160,12 +165,13 @@ class Toggle(tk.Frame):
     def _redraw(self) -> None:
         c = self.canvas
         c.delete("all")
+        w, h = self._tw - 1, self._th - 1
         if self.selected:
-            c.create_rectangle(1, 1, 31, 17, fill="#e33", outline="#a00", width=2)
+            c.create_rectangle(1, 1, w, h, fill="#e33", outline="#a00", width=2)
             return
         on = self.value >= self.pd.max
         outline, width = ("#e80", 2) if self._stale else ("#222", 1)
-        c.create_rectangle(1, 1, 31, 17, fill=("#2a2" if on else "#555"), outline=outline, width=width)
+        c.create_rectangle(1, 1, w, h, fill=("#2a2" if on else "#555"), outline=outline, width=width)
 
     def _on_click(self, _event: tk.Event) -> None:
         if self.app.strip_select_mode:
@@ -241,7 +247,7 @@ class EnumSelector(tk.Frame):
 class Fader(tk.Frame):
     """Linear vertical fader bound to a ParamDef (e.g. kInputFader.kFader)."""
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, length: int = 240, channel: int | None = None):
+    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, length: int = 240, channel: int | None = None, ui_scale: float = 1.0):
         super().__init__(parent)
         self.app = app
         self.group = group
@@ -250,8 +256,10 @@ class Fader(tk.Frame):
         self.pd: ParamDef = app.params.get(group, name)
         self.var = tk.IntVar(value=self.pd.default)
         self.selected = False
+        title_font_size = max(1, round(9 * ui_scale))
+        value_font_size = max(1, round(8 * ui_scale))
 
-        self.title_label = ttk.Label(self, text=label, font=("", 9, "bold"), anchor="center")
+        self.title_label = ttk.Label(self, text=label, font=("", title_font_size, "bold"), anchor="center")
         self.title_label.pack()
         # from_ at the top (max = loudest), to at the bottom (min = quietest).
         self.scale = ttk.Scale(
@@ -260,7 +268,7 @@ class Fader(tk.Frame):
         )
         self.scale.pack()
         self.scale.bind("<Button-1>", self._on_scale_click)
-        self.value_label = ttk.Label(self, text="", font=("", 8), anchor="center", width=10)
+        self.value_label = ttk.Label(self, text="", font=("", value_font_size), anchor="center", width=10)
         self.value_label.pack()
 
         self._stale = False
@@ -306,14 +314,15 @@ class MixName(tk.Frame):
     """Read-only 4-char channel name label for a FIXED channel (MIX tab
     overview) - reads kInputChannelName.kChannelNameShort1-4, joined."""
 
-    def __init__(self, app, parent: tk.Widget, channel: int, width: int = 8):
+    def __init__(self, app, parent: tk.Widget, channel: int, width: int = 8, ui_scale: float = 1.0):
         super().__init__(parent)
         self.app = app
         self.group = "kInputChannelName"
         self.name = "kChannelNameShort"
         self.channel = channel
         self._chars = [32, 32, 32, 32]
-        self.label = ttk.Label(self, text=str(channel + 1), font=("", 8, "bold"), width=width, anchor="center")
+        font_size = max(1, round(8 * ui_scale))
+        self.label = ttk.Label(self, text=str(channel + 1), font=("", font_size, "bold"), width=width, anchor="center")
         self.label.pack()
         app.rows.append(self)
 
