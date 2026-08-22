@@ -281,7 +281,8 @@ class App(tk.Tk):
 
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=4, pady=(4, 0))
-        ttk.Button(top, text="Tout lire", command=self.read_all).pack(side="left")
+        NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal")
+        ttk.Button(top, text="Tout lire", command=self.read_all).pack(anchor="w", pady=(2, 4))
 
         body = ttk.Frame(tab)
         body.pack(fill="both", expand=True, padx=4, pady=4)
