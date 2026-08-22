@@ -49,6 +49,17 @@ class MidiConsole:
             time.sleep(0.01)
         return None
 
+    def poll_all(self) -> list:
+        """Non-blocking: drain and return every message currently queued
+        (possibly empty) - used by SYNC to pick up unsolicited changes made
+        directly on the console without ever blocking the GUI."""
+        msgs = []
+        while True:
+            msg = self.input.poll()
+            if msg is None:
+                return msgs
+            msgs.append(msg)
+
     def close(self) -> None:
         self.output.close()
         self.input.close()

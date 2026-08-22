@@ -39,6 +39,7 @@ class ParameterMap:
         with open(path) as f:
             raw = json.load(f)
         self._by_group_name: dict[tuple[str, str], ParamDef] = {}
+        self._by_address: dict[tuple[int, int, int, int], list[ParamDef]] = {}
         self.groups: dict[str, list[str]] = {}
         for group in raw:
             gname = group["element"]
@@ -66,11 +67,18 @@ class ParameterMap:
                     max_ch=group.get("max_ch"),
                 )
                 self._by_group_name[(gname, p["name"])] = pd
+                self._by_address.setdefault((model_id, addr_type, element, param_no), []).append(pd)
                 names.append(p["name"])
             self.groups[gname] = names
 
     def get(self, group: str, name: str) -> ParamDef:
         return self._by_group_name[(group, name)]
+
+    def find_by_address(self, model_id: int, addr_type: int, element: int, param: int) -> list[ParamDef]:
+        """Reverse lookup used to interpret an unsolicited incoming SysEx
+        message (live SYNC) - we only know its wire address, not which
+        (group, name) it is until we look it up here."""
+        return self._by_address.get((model_id, addr_type, element, param), [])
 
     def find(self, name: str) -> list[ParamDef]:
         """Search a parameter by name only, across all groups."""

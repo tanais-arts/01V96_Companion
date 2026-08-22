@@ -40,6 +40,9 @@ class LoggingMidi:
     def receive(self, timeout: float = 1.0):
         return None
 
+    def poll_all(self) -> list:
+        return []
+
     def close(self) -> None:
         pass
 
@@ -190,6 +193,7 @@ class App(tk.Tk):
         self.scene_title_var = tk.StringVar(value="")
         self._strip_read_after_id: str | None = None
         self._channel_cache: dict[int, dict[tuple[str, str], int]] = {}
+        self._sync_after_id: str | None = None
 
         self._build_connection_bar()
         self._build_channel_bar()
@@ -222,8 +226,14 @@ class App(tk.Tk):
         self.status_label = ttk.Label(bar, text="Déconnecté (simulation)", foreground="#a60")
         self.status_label.pack(side="left", padx=10)
 
+        self.sync_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            bar, text="SYNC (écoute active)", variable=self.sync_var, command=self._on_sync_toggle,
+        ).pack(side="left", padx=10)
+
     def _toggle_connect(self) -> None:
         if self.console is not None:
+            self._stop_sync_poll()
             self.console.close()
             self.console = None
             self.connect_btn.config(text="Connecter")
@@ -245,8 +255,11 @@ class App(tk.Tk):
             return
         self.connect_btn.config(text="Déconnecter")
         self._run_full_recall()
+        if self.sync_var.get():
+            self._start_sync_poll()
 
     def _on_close(self) -> None:
+        self._stop_sync_poll()
         if self.console is not None:
             self.console.close()
         self.destroy()
@@ -926,6 +939,88 @@ class App(tk.Tk):
 
         self._apply_channel_cache(self.channel)
         self.log("Lecture totale (total recall) terminée : toutes les données sont en mémoire.")
+
+    # -- SYNC : écoute active des changements faits directement sur la console --
+    def _on_sync_toggle(self) -> None:
+        if not self.sync_var.get():
+            self.log("SYNC désactivé.")
+            self._stop_sync_poll()
+            return
+        if self.console is None:
+            self.log("SYNC : ouvrez une connexion (réelle ou simulation) d'abord.")
+            self.sync_var.set(False)
+            return
+        self.log("SYNC activé : les changements faits directement sur la console seront suivis ici.")
+        self._start_sync_poll()
+
+    def _start_sync_poll(self) -> None:
+        if self._sync_after_id is not None:
+            return
+        self._sync_after_id = self.after(150, self._sync_tick)
+
+    def _stop_sync_poll(self) -> None:
+        if self._sync_after_id is not None:
+            self.after_cancel(self._sync_after_id)
+            self._sync_after_id = None
+
+    def _sync_tick(self) -> None:
+        self._sync_after_id = None
+        if not self.sync_var.get() or self.console is None:
+            return
+        for msg in self.console.midi.poll_all():
+            self._handle_sync_message(msg)
+        self._sync_after_id = self.after(150, self._sync_tick)
+
+    def _handle_sync_message(self, msg) -> None:
+        try:
+            result = self.console.parse_incoming(msg)
+        except Exception as exc:  # noqa: BLE001 - ne jamais planter l'écoute pour un message imprévu
+            self.log(f"SYNC : message ignoré ({exc})")
+            return
+        if result is None:
+            return
+        pd, channel, value = result
+        self.log(f"SYNC RX {pd.group}.{pd.name} ch={channel} value={value}")
+        self._apply_sync_update(pd, channel, value)
+
+    def _apply_sync_update(self, pd: ParamDef, channel: int, value: int) -> None:
+        """Reflète en direct, sans MIDI supplémentaire, un changement fait
+        sur la console : met à jour le cache par canal (Tranche) et/ou le
+        widget concerné, s'il est actuellement affiché."""
+        group, name = pd.group, pd.name
+        is_input_scoped = not group.startswith("kStereo") and group != "kEffect"
+        if is_input_scoped:
+            self._channel_cache.setdefault(channel, {})[(group, name)] = value
+
+        if group == "kInputChannelName" and name.startswith("kChannelNameLong"):
+            if channel == self.channel:
+                self._refresh_strip_name_from_cache()
+            return
+        if group == "kInputChannelName" and name.startswith("kChannelNameShort"):
+            index = int(name.replace("kChannelNameShort", "")) - 1
+            for row in self.rows:
+                if isinstance(row, MixName) and row.channel == channel:
+                    row._set_char(index, value)
+            return
+
+        for row in self.rows:
+            if getattr(row, "name", None) != name or row.group != group:
+                continue
+            row_channel = getattr(row, "channel", None)
+            if row_channel is None:
+                row_channel = self._channel_for(group)
+            if row_channel == channel:
+                row.set_raw_value(value)
+
+    def _refresh_strip_name_from_cache(self) -> None:
+        """Recompose le nom (16 caractères) affiché sur l'onglet Tranche à
+        partir du cache - seulement si les 16 caractères sont déjà connus,
+        pour ne jamais afficher un nom tronqué/vidé par un cache partiel."""
+        values = self._channel_cache.get(self.channel, {})
+        chars = [values.get(("kInputChannelName", f"kChannelNameLong{i}")) for i in range(1, 17)]
+        if any(c is None for c in chars):
+            return
+        self.strip_name_row.var.set("".join(chr(c) if 32 <= c < 127 else " " for c in chars).rstrip())
 
     # -- channel strip copy/paste, routed through self.console --------------
     def _read_channel_params(self, channel: int, defs: list[tuple[str, str]]) -> dict[tuple[str, str], int]:

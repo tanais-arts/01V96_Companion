@@ -5,7 +5,7 @@ import time
 
 from . import sysex
 from .midi import MidiConsole
-from .params import ParameterMap
+from .params import ParameterMap, ParamDef
 
 
 class V2Console:
@@ -60,6 +60,30 @@ class V2Console:
             if parsed["element"] != pd.element or parsed["param"] != pd.param or parsed["channel"] != channel:
                 continue
             return parsed["value"]
+
+    def parse_incoming(self, msg) -> tuple[ParamDef, int, int] | None:
+        """Try to interpret an ARBITRARY, unsolicited incoming mido message
+        (e.g. someone touching a fader directly on the console) as one of
+        our known parameters. Unlike request_parameter(), we don't know in
+        advance which parameter this is - element/param/channel can be read
+        without knowing min/max, but decoding the value needs the matching
+        ParamDef's min/max (for correct sign handling), so this is a
+        two-step reverse-lookup-then-decode. Returns (ParamDef, channel,
+        value), or None if `msg` isn't a Parameter Change we recognise.
+        """
+        if msg.type != "sysex":
+            return None
+        b = [0xF0, *msg.data, 0xF7]
+        if len(b) < 10 or b[1] != sysex.MANUFACTURER_ID or (b[2] & 0xF0) != 0x10 or b[3] != sysex.GROUP_ID:
+            return None
+        model_id, addr_type, element, param = b[4], b[5], b[6], b[7]
+        for pd in self.params.find_by_address(model_id, addr_type, element, param):
+            parsed = sysex.parse_parameter_change(
+                bytes(b), pd.min, pd.max, model_id=model_id, addr_type=addr_type,
+            )
+            if parsed is not None:
+                return pd, parsed["channel"], parsed["value"]
+        return None
 
     def get_scene_title(self, number: int, timeout: float = 1.0) -> str | None:
         req = sysex.build_title_request(sysex.FUNC_SCENE_TITLE, number, device=self.device)
