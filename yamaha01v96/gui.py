@@ -900,7 +900,10 @@ class App(tk.Tk):
                 values: dict[tuple[str, str], int] = {}
                 for group, name in full_defs:
                     try:
-                        value = self.console.request_parameter(group, name, ch)
+                        # Timeout court : sur ~3000 lectures, un paramètre
+                        # muet ne doit pas coûter la seconde entière du
+                        # timeout par défaut (voir request_parameter).
+                        value = self.console.request_parameter(group, name, ch, timeout=0.2)
                     except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
                         self.log(f"Erreur lecture {group}.{name} (canal {ch + 1}) : {exc}")
                         value = None

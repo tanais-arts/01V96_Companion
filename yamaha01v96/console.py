@@ -47,8 +47,10 @@ class V2Console:
             if remaining <= 0:
                 return None
             msg = self.midi.receive(timeout=remaining)
-            if msg is None or msg.type != "sysex":
+            if msg is None:
                 return None
+            if msg.type != "sysex":
+                continue  # e.g. Active Sensing/Clock interleaved with the reply - keep waiting
             full = bytes([0xF0, *msg.data, 0xF7])
             parsed = sysex.parse_parameter_change(
                 full, pd.min, pd.max, model_id=pd.model_id, addr_type=pd.addr_type,
