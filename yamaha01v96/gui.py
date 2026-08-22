@@ -279,8 +279,9 @@ class App(tk.Tk):
 
     def _build_mix_tab(self, nb: ttk.Notebook) -> None:
         """General mixer overview (à la Nuendo/Cubase MixConsole) : les 32
-        canaux d'entrée (nom court, pan, on/off, fader) puis les 8 départs
-        AUX/FX et le MASTER, tous à la suite horizontalement."""
+        canaux d'entrée (nom court, pan, on/off, fader) en haut, puis les 8
+        départs AUX, les 4 retours FX et le MASTER sur une deuxième ligne
+        en dessous."""
         tab = ttk.Frame(nb)
         nb.add(tab, text="MIX")
 
@@ -298,30 +299,41 @@ class App(tk.Tk):
         canvas.create_window((0, 0), window=inner, anchor="nw")
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        s = 0.5  # taille réduite de moitié pour faire tenir 32 tranches + AUX + MASTER
+        s = 0.5  # taille réduite de moitié pour faire tenir 32 tranches + AUX/FX/MASTER
         fader_len = 80
 
+        channels_row = ttk.Frame(inner)
+        channels_row.pack(side="top", fill="x", anchor="w")
         for ch in range(32):
-            strip = ttk.LabelFrame(inner, text=str(ch + 1))
+            strip = ttk.LabelFrame(channels_row, text=str(ch + 1))
             strip.pack(side="left", fill="y", padx=1, pady=2)
             MixName(self, strip, ch, ui_scale=s).pack(pady=(2, 4))
             Knob(self, strip, "kInputChannelPan", "kChannelPan", "Pan", channel=ch, ui_scale=s).pack()
             Toggle(self, strip, "kInputChannelOn", "kChannelOn", "On", channel=ch, ui_scale=s).pack(pady=4)
             Fader(self, strip, "kInputFader", "kFader", "", length=fader_len, channel=ch, ui_scale=s).pack()
 
-        ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
+        sends_row = ttk.Frame(inner)
+        sends_row.pack(side="top", fill="x", anchor="w", pady=(6, 0))
 
         for a in range(8):
-            strip = ttk.LabelFrame(inner, text=f"AUX {a + 1}")
+            strip = ttk.LabelFrame(sends_row, text=f"AUX {a + 1}")
             strip.pack(side="left", fill="y", padx=1, pady=2)
-            Toggle(self, strip, "kAUXChannelOn", "kChannelOn", "On", channel=a, ui_scale=s).pack(pady=(28, 4))
+            Toggle(self, strip, "kAUXChannelOn", "kChannelOn", "On", channel=a, ui_scale=s).pack(pady=4)
             Fader(self, strip, "kAUXFader", "kFader", "", length=fader_len, channel=a, ui_scale=s).pack()
 
-        ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
+        ttk.Separator(sends_row, orient="vertical").pack(side="left", fill="y", padx=6)
 
-        master = ttk.LabelFrame(inner, text="MASTER")
+        for e in range(4):
+            strip = ttk.LabelFrame(sends_row, text=f"FX {e + 1}")
+            strip.pack(side="left", fill="y", padx=1, pady=2)
+            Toggle(self, strip, "kEffect", "kEffectBypass", "Byp", channel=e, ui_scale=s).pack(pady=4)
+            Fader(self, strip, "kEffect", "kEffectMix", "", length=fader_len, channel=e, ui_scale=s).pack()
+
+        ttk.Separator(sends_row, orient="vertical").pack(side="left", fill="y", padx=6)
+
+        master = ttk.LabelFrame(sends_row, text="MASTER")
         master.pack(side="left", fill="y", padx=1, pady=2)
-        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On", ui_scale=s).pack(pady=(28, 4))
+        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On", ui_scale=s).pack(pady=4)
         Fader(self, master, "kStereoFader", "kFader", "", length=fader_len, ui_scale=s).pack()
 
     def _build_strip_tab(self, nb: ttk.Notebook) -> None:
