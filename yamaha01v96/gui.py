@@ -22,6 +22,7 @@ from . import sysex, converters
 from .console import V2Console
 from .midi import MidiConsole, list_ports
 from .params import ParameterMap, ParamDef
+from .strip_widgets import Knob, Toggle, EnumSelector, Fader
 
 SIMULATION_LABEL = "-- Simulation hors ligne --"
 
@@ -174,7 +175,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Éditeur 01V96 V2 (remplacement SM2)")
-        self.geometry("820x600")
+        self.geometry("1480x760")
 
         self.params = ParameterMap()
         self.console: V2Console | None = None
@@ -261,6 +262,7 @@ class App(tk.Tk):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=6, pady=6)
 
+        self._build_strip_tab(nb)
         self._build_scene_tab(nb)
         self._build_backup_tab(nb)
         self._build_copy_tab(nb)
@@ -269,6 +271,105 @@ class App(tk.Tk):
         self._build_routing_tab(nb)
         self._build_name_tab(nb)
         self._build_effect_tab(nb)
+
+    def _build_strip_tab(self, nb: ttk.Notebook) -> None:
+        """One-window channel-strip overview (knobs/toggles), à la console
+        analogique : Dynamique, EQ, envois AUX, envois bus, fader - tout ce
+        qui utilise le canal d'entrée sélectionné ci-dessus."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Tranche")
+        body = ttk.Frame(tab)
+        body.pack(fill="both", expand=True, padx=4, pady=4)
+
+        self._build_strip_dynamics(body)
+        self._build_strip_eq(body)
+        self._build_strip_aux(body)
+        self._build_strip_bus(body)
+        self._build_strip_fader(body)
+
+    def _build_strip_dynamics(self, parent: tk.Widget) -> None:
+        frame = ttk.LabelFrame(parent, text="Dynamique")
+        frame.pack(side="left", fill="y", padx=3)
+
+        gate = ttk.Frame(frame)
+        gate.pack(pady=4)
+        ttk.Label(gate, text="GATE", font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
+        Toggle(self, gate, "kInputGate", "kGateOn", "On").grid(row=1, column=0, padx=2)
+        EnumSelector(self, gate, "kInputGate", "kGateType", "Type").grid(row=1, column=1, columnspan=2, padx=2)
+        Knob(self, gate, "kInputGate", "kGateThreshold", "Seuil").grid(row=2, column=0, padx=2, pady=2)
+        Knob(self, gate, "kInputGate", "kGateRange", "Range").grid(row=2, column=1, padx=2, pady=2)
+        Knob(self, gate, "kInputGate", "kGateAttack", "Atk").grid(row=2, column=2, padx=2, pady=2)
+        Knob(self, gate, "kInputGate", "kGateHold", "Hold").grid(row=3, column=0, padx=2, pady=2)
+        Knob(self, gate, "kInputGate", "kGateDecay", "Decay").grid(row=3, column=1, padx=2, pady=2)
+
+        ttk.Separator(frame).pack(fill="x", pady=6)
+
+        comp = ttk.Frame(frame)
+        comp.pack(pady=4)
+        ttk.Label(comp, text="COMP", font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
+        Toggle(self, comp, "kInputComp", "kCompOn", "On").grid(row=1, column=0, padx=2)
+        EnumSelector(self, comp, "kInputComp", "kCompType", "Type").grid(row=1, column=1, columnspan=2, padx=2)
+        Knob(self, comp, "kInputComp", "kCompThreshold", "Seuil").grid(row=2, column=0, padx=2, pady=2)
+        Knob(self, comp, "kInputComp", "kCompRatio", "Ratio").grid(row=2, column=1, padx=2, pady=2)
+        Knob(self, comp, "kInputComp", "kCompAttack", "Atk").grid(row=2, column=2, padx=2, pady=2)
+        Knob(self, comp, "kInputComp", "kCompRelease", "Rel").grid(row=3, column=0, padx=2, pady=2)
+        Knob(self, comp, "kInputComp", "kCompKnee", "Knee").grid(row=3, column=1, padx=2, pady=2)
+        Knob(self, comp, "kInputComp", "kCompGain", "Gain").grid(row=3, column=2, padx=2, pady=2)
+
+    def _build_strip_eq(self, parent: tk.Widget) -> None:
+        frame = ttk.LabelFrame(parent, text="EQ")
+        frame.pack(side="left", fill="y", padx=3)
+
+        top = ttk.Frame(frame)
+        top.pack(pady=4)
+        Toggle(self, top, "kInputEQ", "kEQOn", "EQ On").grid(row=0, column=0, padx=2)
+        Toggle(self, top, "kInputEQ", "kEQHPFOn", "HPF").grid(row=0, column=1, padx=2)
+        Toggle(self, top, "kInputEQ", "kEQLPFOn", "LPF").grid(row=0, column=2, padx=2)
+
+        for band, label in [("Low", "GRAVE"), ("LowMid", "BAS-MED"), ("HiMid", "HAUT-MED"), ("Hi", "AIGU")]:
+            ttk.Separator(frame).pack(fill="x", pady=4)
+            section = ttk.Frame(frame)
+            section.pack(pady=2)
+            ttk.Label(section, text=label, font=("", 9, "bold")).grid(row=0, column=0, columnspan=3, pady=(0, 2))
+            Knob(self, section, "kInputEQ", f"kEQ{band}G", "Gain").grid(row=1, column=0, padx=2)
+            Knob(self, section, "kInputEQ", f"kEQ{band}F", "Freq").grid(row=1, column=1, padx=2)
+            Knob(self, section, "kInputEQ", f"kEQ{band}Q", "Q").grid(row=1, column=2, padx=2)
+
+    def _build_strip_aux(self, parent: tk.Widget) -> None:
+        frame = ttk.LabelFrame(parent, text="Envois AUX")
+        frame.pack(side="left", fill="y", padx=3)
+        for i in range(1, 13):
+            row, col = divmod(i - 1, 3)
+            cell = ttk.Frame(frame)
+            cell.grid(row=row, column=col, padx=3, pady=3)
+            ttk.Label(cell, text=f"AUX {i}", font=("", 8, "bold")).pack()
+            Toggle(self, cell, "kInputAUX", f"kAUX{i}On", "On").pack()
+            Knob(self, cell, "kInputAUX", f"kAUX{i}Level", "Niv.").pack()
+
+    def _build_strip_bus(self, parent: tk.Widget) -> None:
+        frame = ttk.LabelFrame(parent, text="Envois bus")
+        frame.pack(side="left", fill="y", padx=3)
+
+        top = ttk.Frame(frame)
+        top.pack(pady=4)
+        Toggle(self, top, "kInputRouting", "kRoutingStereo", "Stéréo").grid(row=0, column=0, padx=2)
+        Toggle(self, top, "kInputRouting", "kRoutingDirect", "Direct").grid(row=0, column=1, padx=2)
+
+        ttk.Separator(frame).pack(fill="x", pady=4)
+        grid = ttk.Frame(frame)
+        grid.pack(pady=2)
+        for i in range(1, 9):
+            row, col = divmod(i - 1, 4)
+            Toggle(self, grid, "kInputRouting", f"kRoutingBus{i}", f"Bus{i}").grid(
+                row=row, column=col, padx=3, pady=3,
+            )
+
+    def _build_strip_fader(self, parent: tk.Widget) -> None:
+        frame = ttk.LabelFrame(parent, text="Fader")
+        frame.pack(side="left", fill="both", expand=True, padx=3)
+        Toggle(self, frame, "kInputChannelOn", "kChannelOn", "On").pack(pady=4)
+        Knob(self, frame, "kInputChannelPan", "kChannelPan", "Pan").pack(pady=4)
+        Fader(self, frame, "kInputFader", "kFader", "Niveau").pack(pady=4, fill="y", expand=True)
 
     def _build_scene_tab(self, nb: ttk.Notebook) -> None:
         tab = ttk.Frame(nb)
