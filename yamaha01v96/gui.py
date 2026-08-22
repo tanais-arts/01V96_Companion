@@ -22,7 +22,7 @@ from . import sysex, converters
 from .console import V2Console
 from .midi import MidiConsole, list_ports
 from .params import ParameterMap, ParamDef
-from .strip_widgets import Knob, Toggle, EnumSelector, Fader
+from .strip_widgets import Knob, Toggle, EnumSelector, Fader, MixName
 
 SIMULATION_LABEL = "-- Simulation hors ligne --"
 DEFAULT_PORT_NAME = "YAMAHA 01V96 Port5"
@@ -270,11 +270,56 @@ class App(tk.Tk):
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=6, pady=6)
 
+        self._build_mix_tab(nb)
         self._build_strip_tab(nb)
         self._build_scene_tab(nb)
         self._build_backup_tab(nb)
         self._build_routing_tab(nb)
         self._build_effect_tab(nb)
+
+    def _build_mix_tab(self, nb: ttk.Notebook) -> None:
+        """General mixer overview (à la Nuendo/Cubase MixConsole) : les 32
+        canaux d'entrée (nom court, pan, on/off, fader) puis les 8 départs
+        AUX/FX et le MASTER, tous à la suite horizontalement."""
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="MIX")
+
+        ttk.Button(tab, text="Tout lire", command=self.read_all).pack(anchor="w", padx=4, pady=4)
+
+        outer = ttk.Frame(tab)
+        outer.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        hbar = ttk.Scrollbar(outer, orient="horizontal", command=canvas.xview)
+        canvas.configure(xscrollcommand=hbar.set)
+        canvas.pack(side="top", fill="both", expand=True)
+        hbar.pack(side="bottom", fill="x")
+
+        inner = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        for ch in range(32):
+            strip = ttk.LabelFrame(inner, text=str(ch + 1))
+            strip.pack(side="left", fill="y", padx=1, pady=2)
+            MixName(self, strip, ch).pack(pady=(2, 4))
+            Knob(self, strip, "kInputChannelPan", "kChannelPan", "Pan", channel=ch).pack()
+            Toggle(self, strip, "kInputChannelOn", "kChannelOn", "On", channel=ch).pack(pady=4)
+            Fader(self, strip, "kInputFader", "kFader", "", length=160, channel=ch).pack()
+
+        ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
+
+        for a in range(8):
+            strip = ttk.LabelFrame(inner, text=f"AUX {a + 1}")
+            strip.pack(side="left", fill="y", padx=1, pady=2)
+            Toggle(self, strip, "kAUXChannelOn", "kChannelOn", "On", channel=a).pack(pady=(28, 4))
+            Fader(self, strip, "kAUXFader", "kFader", "", length=160, channel=a).pack()
+
+        ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
+
+        master = ttk.LabelFrame(inner, text="MASTER")
+        master.pack(side="left", fill="y", padx=1, pady=2)
+        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On").pack(pady=(28, 4))
+        Fader(self, master, "kStereoFader", "kFader", "", length=160).pack()
 
     def _build_strip_tab(self, nb: ttk.Notebook) -> None:
         """One-window channel-strip overview (knobs/toggles), à la console
@@ -582,11 +627,12 @@ class App(tk.Tk):
             return 0
         return self.channel
 
-    def set_parameter(self, group: str, name: str, value: int) -> None:
+    def set_parameter(self, group: str, name: str, value: int, channel: int | None = None) -> None:
         if self.console is None:
             self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
             return
-        channel = self._channel_for(group)
+        if channel is None:
+            channel = self._channel_for(group)
         try:
             self.console.set_parameter(group, name, channel, value)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
@@ -600,13 +646,14 @@ class App(tk.Tk):
             )
             self.log(f"TX {group}.{name} ch={channel} value={value} : {msg.hex(' ')}")
 
-    def request_parameter(self, group: str, name: str, on_result, on_failure=None) -> None:
+    def request_parameter(self, group: str, name: str, on_result, on_failure=None, channel: int | None = None) -> None:
         if self.console is None:
             self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
             if on_failure is not None:
                 on_failure()
             return
-        channel = self._channel_for(group)
+        if channel is None:
+            channel = self._channel_for(group)
         try:
             value = self.console.request_parameter(group, name, channel)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user directly

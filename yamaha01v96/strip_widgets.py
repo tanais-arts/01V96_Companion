@@ -35,11 +35,12 @@ class Knob(tk.Frame):
     SWEEP_DEG = 270
     SENSITIVITY = 150  # pixels of vertical drag needed to cover the full range
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str):
+    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, channel: int | None = None):
         super().__init__(parent)
         self.app = app
         self.group = group
         self.name = name
+        self.channel = channel  # None = shared channel selector, else a fixed hardware channel (MIX tab)
         self.pd: ParamDef = app.params.get(group, name)
         self.value = self.pd.default
         self._stale = False
@@ -117,10 +118,12 @@ class Knob(tk.Frame):
         self.value = value
         self._stale = False
         self._redraw()
-        self.app.set_parameter(self.group, self.name, self.value)
+        self.app.set_parameter(self.group, self.name, self.value, channel=self.channel)
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
+        self.app.request_parameter(
+            self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed, channel=self.channel,
+        )
 
     def set_raw_value(self, value: int) -> None:
         self.value = max(self.pd.min, min(self.pd.max, value))
@@ -135,11 +138,12 @@ class Knob(tk.Frame):
 class Toggle(tk.Frame):
     """LED-style square button bound to a boolean (min=0, max=1) ParamDef."""
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str):
+    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, channel: int | None = None):
         super().__init__(parent)
         self.app = app
         self.group = group
         self.name = name
+        self.channel = channel  # None = shared channel selector, else a fixed hardware channel (MIX tab)
         self.pd: ParamDef = app.params.get(group, name)
         self.value = self.pd.default
         self._stale = False
@@ -171,10 +175,12 @@ class Toggle(tk.Frame):
         self.value = self.pd.min if self.value >= self.pd.max else self.pd.max
         self._stale = False
         self._redraw()
-        self.app.set_parameter(self.group, self.name, self.value)
+        self.app.set_parameter(self.group, self.name, self.value, channel=self.channel)
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
+        self.app.request_parameter(
+            self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed, channel=self.channel,
+        )
 
     def set_raw_value(self, value: int) -> None:
         self.value = value
@@ -235,11 +241,12 @@ class EnumSelector(tk.Frame):
 class Fader(tk.Frame):
     """Linear vertical fader bound to a ParamDef (e.g. kInputFader.kFader)."""
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, length: int = 240):
+    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, length: int = 240, channel: int | None = None):
         super().__init__(parent)
         self.app = app
         self.group = group
         self.name = name
+        self.channel = channel  # None = shared channel selector, else a fixed hardware channel (MIX tab)
         self.pd: ParamDef = app.params.get(group, name)
         self.var = tk.IntVar(value=self.pd.default)
         self.selected = False
@@ -277,11 +284,13 @@ class Fader(tk.Frame):
 
     def _on_change(self, _value: str) -> None:
         self._stale = False
-        self.app.set_parameter(self.group, self.name, int(float(self.var.get())))
+        self.app.set_parameter(self.group, self.name, int(float(self.var.get())), channel=self.channel)
         self._redraw()
 
     def get_value(self) -> None:
-        self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed)
+        self.app.request_parameter(
+            self.group, self.name, on_result=self.set_raw_value, on_failure=self._on_read_failed, channel=self.channel,
+        )
 
     def set_raw_value(self, value: int) -> None:
         self.var.set(value)
@@ -290,4 +299,35 @@ class Fader(tk.Frame):
 
     def _on_read_failed(self) -> None:
         self._stale = True
+        self._redraw()
+
+
+class MixName(tk.Frame):
+    """Read-only 4-char channel name label for a FIXED channel (MIX tab
+    overview) - reads kInputChannelName.kChannelNameShort1-4, joined."""
+
+    def __init__(self, app, parent: tk.Widget, channel: int, width: int = 8):
+        super().__init__(parent)
+        self.app = app
+        self.group = "kInputChannelName"
+        self.name = "kChannelNameShort"
+        self.channel = channel
+        self._chars = [32, 32, 32, 32]
+        self.label = ttk.Label(self, text=str(channel + 1), font=("", 8, "bold"), width=width, anchor="center")
+        self.label.pack()
+        app.rows.append(self)
+
+    def _redraw(self) -> None:
+        text = "".join(chr(c) for c in self._chars).strip()
+        self.label.config(text=text or str(self.channel + 1))
+
+    def get_value(self) -> None:
+        for i in range(4):
+            self.app.request_parameter(
+                self.group, f"kChannelNameShort{i + 1}",
+                on_result=lambda v, i=i: self._set_char(i, v), channel=self.channel,
+            )
+
+    def _set_char(self, index: int, value: int) -> None:
+        self._chars[index] = value
         self._redraw()
