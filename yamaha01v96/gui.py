@@ -185,7 +185,6 @@ class App(tk.Tk):
         self.channel_var = tk.IntVar(value=1)
         self.effect_var = tk.IntVar(value=1)
         self.rows: list[ParamRow | NameRow] = []
-        self.channel_clipboard: dict[tuple[str, str], int] | None = None
         self.strip_clipboard: dict[tuple[str, str], int] | None = None
         self.strip_select_mode = False
         self.scene_title_var = tk.StringVar(value="")
@@ -274,11 +273,7 @@ class App(tk.Tk):
         self._build_strip_tab(nb)
         self._build_scene_tab(nb)
         self._build_backup_tab(nb)
-        self._build_copy_tab(nb)
-        self._build_eq_tab(nb)
-        self._build_dynamics_tab(nb)
         self._build_routing_tab(nb)
-        self._build_name_tab(nb)
         self._build_effect_tab(nb)
 
     def _build_strip_tab(self, nb: ttk.Notebook) -> None:
@@ -521,85 +516,6 @@ class App(tk.Tk):
         ttk.Button(row3, text="Sauvegarder…", command=self._backup_setup).pack(side="left", padx=4)
         ttk.Button(row3, text="Restaurer…", command=self._restore_setup).pack(side="left", padx=4)
 
-    def _build_copy_tab(self, nb: ttk.Notebook) -> None:
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Copier/Coller")
-        ttk.Label(
-            tab,
-            text="Copie les réglages d'une tranche d'entrée (EQ, Dynamique, Routing) vers une autre. "
-                 "N'inclut pas les paramètres de l'onglet Effet (partagés par slot d'effet, pas par canal).",
-            foreground="#666", wraplength=760,
-        ).pack(anchor="w", padx=4, pady=(4, 8))
-
-        row = ttk.Frame(tab)
-        row.pack(fill="x", padx=4, pady=4)
-        ttk.Label(row, text="Canal source (1-32) :").pack(side="left")
-        self.copy_src_var = tk.IntVar(value=1)
-        ttk.Spinbox(row, from_=1, to=32, textvariable=self.copy_src_var, width=5).pack(side="left", padx=4)
-        ttk.Label(row, text="Canal destination (1-32) :").pack(side="left", padx=(12, 0))
-        self.copy_dst_var = tk.IntVar(value=2)
-        ttk.Spinbox(row, from_=1, to=32, textvariable=self.copy_dst_var, width=5).pack(side="left", padx=4)
-
-        self.copy_include_name_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            tab, text="Inclure le nom du canal", variable=self.copy_include_name_var,
-        ).pack(anchor="w", padx=4, pady=(4, 0))
-
-        ttk.Button(tab, text="Copier -> Coller directement", command=self._copy_paste_channel).pack(
-            anchor="w", padx=4, pady=8,
-        )
-
-        ttk.Separator(tab).pack(fill="x", pady=8)
-        ttk.Label(
-            tab, text="Presse-papiers interne (pratique pour coller sur plusieurs canaux)",
-            font=("", 10, "bold"),
-        ).pack(anchor="w", padx=4)
-        row2 = ttk.Frame(tab)
-        row2.pack(fill="x", padx=4, pady=4)
-        ttk.Button(row2, text="Copier le canal source", command=self._copy_channel_to_clipboard).pack(
-            side="left", padx=4,
-        )
-        ttk.Button(row2, text="Coller sur la destination", command=self._paste_clipboard_to_channel).pack(
-            side="left", padx=4,
-        )
-        self.channel_clipboard_label = ttk.Label(tab, text="Presse-papiers : vide", foreground="#666")
-        self.channel_clipboard_label.pack(anchor="w", padx=4, pady=(4, 0))
-
-    def _build_eq_tab(self, nb: ttk.Notebook) -> None:
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="EQ")
-        ParamRow(self, tab, "kInputEQ", "kEQOn", "EQ actif")
-        ParamRow(self, tab, "kInputEQ", "kEQMode", "Mode")
-        ParamRow(self, tab, "kInputEQ", "kEQHPFOn", "HPF actif")
-        ParamRow(self, tab, "kInputEQ", "kEQLPFOn", "LPF actif")
-        for band, label in [("Low", "Grave"), ("LowMid", "Bas-médium"), ("HiMid", "Haut-médium"), ("Hi", "Aigu")]:
-            ttk.Separator(tab).pack(fill="x", pady=4)
-            ttk.Label(tab, text=label, font=("", 10, "bold")).pack(anchor="w", padx=4)
-            ParamRow(self, tab, "kInputEQ", f"kEQ{band}G", "Gain")
-            ParamRow(self, tab, "kInputEQ", f"kEQ{band}F", "Fréquence (index)")
-            ParamRow(self, tab, "kInputEQ", f"kEQ{band}Q", "Q (index)")
-
-    def _build_dynamics_tab(self, nb: ttk.Notebook) -> None:
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Dynamique")
-        ttk.Label(tab, text="Compresseur", font=("", 10, "bold")).pack(anchor="w", padx=4)
-        for name, label in [
-            ("kCompOn", "Actif"), ("kCompType", "Type"), ("kCompThreshold", "Seuil"),
-            ("kCompRatio", "Ratio (index)"), ("kCompAttack", "Attaque (ms)"),
-            ("kCompRelease", "Release (index)"), ("kCompKnee", "Knee (index)"),
-            ("kCompGain", "Gain (index)"), ("kCompLink", "Lien stéréo"),
-        ]:
-            ParamRow(self, tab, "kInputComp", name, label)
-        ttk.Separator(tab).pack(fill="x", pady=4)
-        ttk.Label(tab, text="Gate", font=("", 10, "bold")).pack(anchor="w", padx=4)
-        for name, label in [
-            ("kGateOn", "Actif"), ("kGateType", "Type"), ("kGateThreshold", "Seuil"),
-            ("kGateRange", "Plage"), ("kGateAttack", "Attaque (ms)"),
-            ("kGateHold", "Hold (index)"), ("kGateDecay", "Decay (index)"),
-            ("kGateKeyIn", "Key In"), ("kGateLink", "Lien stéréo"),
-        ]:
-            ParamRow(self, tab, "kInputGate", name, label)
-
     def _build_routing_tab(self, nb: ttk.Notebook) -> None:
         tab = ttk.Frame(nb)
         nb.add(tab, text="Routing")
@@ -611,12 +527,6 @@ class App(tk.Tk):
         ttk.Separator(tab).pack(fill="x", pady=4)
         ParamRow(self, tab, "kInputFader", "kFader", "Fader (index)")
         ParamRow(self, tab, "kInputInsert", "kInsertOn", "Insert actif")
-
-    def _build_name_tab(self, nb: ttk.Notebook) -> None:
-        tab = ttk.Frame(nb)
-        nb.add(tab, text="Noms")
-        NameRow(self, tab, "kInputChannelName", "kChannelNameShort", 4, "Nom court (4 car.)")
-        NameRow(self, tab, "kInputChannelName", "kChannelNameLong", 16, "Nom long (16 car.)")
 
     def _build_effect_tab(self, nb: ttk.Notebook) -> None:
         tab = ttk.Frame(nb)
@@ -786,28 +696,6 @@ class App(tk.Tk):
         self.log("Tout lire : terminé.")
 
     # -- channel strip copy/paste, routed through self.console --------------
-    def _channel_param_defs(self, include_name: bool) -> list[tuple[str, str]]:
-        """(group, name) pairs for all per-input-channel controls (i.e.
-        everything using the shared channel selector - excludes kEffect,
-        whose channel dimension is the effect slot, not the input channel)."""
-        seen: set[tuple[str, str]] = set()
-        pairs: list[tuple[str, str]] = []
-        for row in self.rows:
-            if row.group == "kEffect":
-                continue
-            if row.group == "kInputChannelName" and not include_name:
-                continue
-            names = row.names if isinstance(row, NameRow) else [row.name]
-            for name in names:
-                key = (row.group, name)
-                if key not in seen:
-                    seen.add(key)
-                    pairs.append(key)
-        return pairs
-
-    def _read_channel(self, channel: int, include_name: bool) -> dict[tuple[str, str], int]:
-        return self._read_channel_params(channel, self._channel_param_defs(include_name))
-
     def _read_channel_params(self, channel: int, defs: list[tuple[str, str]]) -> dict[tuple[str, str], int]:
         values: dict[tuple[str, str], int] = {}
         for group, name in defs:
@@ -955,53 +843,6 @@ class App(tk.Tk):
             return
         count = self._write_channel(dst, self.strip_clipboard)
         self.log(f"PASTE TO : {count} réglage(s) collé(s) sur le canal {dst + 1}.")
-        self._refresh_if_visible(dst)
-
-    def _copy_paste_channel(self) -> None:
-        if self.console is None:
-            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
-            return
-        src, dst = self.copy_src_var.get() - 1, self.copy_dst_var.get() - 1
-        if src == dst:
-            messagebox.showerror("Copier/Coller", "Le canal source et destination doivent être différents.")
-            return
-        include_name = self.copy_include_name_var.get()
-        self.log(f"Copie canal {src + 1} -> canal {dst + 1}…")
-        values = self._read_channel(src, include_name)
-        if not values:
-            self.log("Copie annulée : aucune valeur lue (console absente ou simulation).")
-            return
-        count = self._write_channel(dst, values)
-        self.log(f"Copie terminée : {count}/{len(values)} paramètre(s) écrits sur le canal {dst + 1}.")
-        self._refresh_if_visible(dst)
-
-    def _copy_channel_to_clipboard(self) -> None:
-        if self.console is None:
-            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
-            return
-        src = self.copy_src_var.get() - 1
-        include_name = self.copy_include_name_var.get()
-        self.log(f"Copie du canal {src + 1} dans le presse-papiers…")
-        values = self._read_channel(src, include_name)
-        if not values:
-            self.log("Copie annulée : aucune valeur lue (console absente ou simulation).")
-            return
-        self.channel_clipboard = values
-        self.channel_clipboard_label.config(
-            text=f"Presse-papiers : canal {src + 1} ({len(values)} paramètre(s))"
-        )
-        self.log(f"Presse-papiers : {len(values)} paramètre(s) du canal {src + 1}.")
-
-    def _paste_clipboard_to_channel(self) -> None:
-        if self.console is None:
-            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
-            return
-        if not self.channel_clipboard:
-            messagebox.showerror("Coller", "Le presse-papiers est vide : copiez d'abord un canal.")
-            return
-        dst = self.copy_dst_var.get() - 1
-        count = self._write_channel(dst, self.channel_clipboard)
-        self.log(f"Collé : {count} paramètre(s) sur le canal {dst + 1}.")
         self._refresh_if_visible(dst)
 
     def _store_scene(self) -> None:
