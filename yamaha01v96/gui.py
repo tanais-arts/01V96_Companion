@@ -25,6 +25,7 @@ from .params import ParameterMap, ParamDef
 from .strip_widgets import Knob, Toggle, EnumSelector, Fader
 
 SIMULATION_LABEL = "-- Simulation hors ligne --"
+DEFAULT_PORT_NAME = "YAMAHA 01V96 Port5"
 
 
 class LoggingMidi:
@@ -136,7 +137,7 @@ class NameRow:
     name), built from N consecutive per-character parameters
     (e.g. kChannelNameShort1..4 or kChannelNameLong1..16)."""
 
-    def __init__(self, app: "App", parent: tk.Widget, group: str, base_name: str, count: int, label: str):
+    def __init__(self, app: "App", parent: tk.Widget, group: str, base_name: str, count: int, label: str, show_read_button: bool = True):
         self.app = app
         self.group = group
         self.names = [f"{base_name}{i}" for i in range(1, count + 1)]
@@ -149,7 +150,8 @@ class NameRow:
         entry = ttk.Entry(row, textvariable=self.var, width=count + 2)
         entry.pack(side="left")
         ttk.Button(row, text="Envoyer", width=8, command=self.send).pack(side="left", padx=4)
-        ttk.Button(row, text="Lire", width=6, command=self.get_value).pack(side="right")
+        if show_read_button:
+            ttk.Button(row, text="Lire", width=6, command=self.get_value).pack(side="right")
         app.rows.append(self)
 
     def send(self) -> None:
@@ -192,6 +194,9 @@ class App(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        if self.port_var.get() != SIMULATION_LABEL:
+            self._toggle_connect()
+
     # -- connection -----------------------------------------------------
     def _build_connection_bar(self) -> None:
         bar = ttk.Frame(self)
@@ -199,7 +204,8 @@ class App(tk.Tk):
 
         ttk.Label(bar, text="Port MIDI :").pack(side="left")
         outputs = list_ports()["outputs"]
-        self.port_var = tk.StringVar(value=SIMULATION_LABEL)
+        default_port = DEFAULT_PORT_NAME if DEFAULT_PORT_NAME in outputs else SIMULATION_LABEL
+        self.port_var = tk.StringVar(value=default_port)
         self.port_combo = ttk.Combobox(
             bar, textvariable=self.port_var, values=[SIMULATION_LABEL] + outputs,
             state="readonly", width=30,
@@ -281,7 +287,7 @@ class App(tk.Tk):
 
         top = ttk.Frame(tab)
         top.pack(fill="x", padx=4, pady=(4, 0))
-        NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal")
+        NameRow(self, top, "kInputChannelName", "kChannelNameLong", 16, "Nom du canal", show_read_button=False)
         ttk.Button(top, text="Tout lire", command=self.read_all).pack(anchor="w", pady=(2, 4))
 
         body = ttk.Frame(tab)
