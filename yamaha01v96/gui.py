@@ -471,7 +471,10 @@ class App(tk.Tk):
         self._refresh_scene_combos()
 
         try:
-            current_title = self.console.get_scene_title(0, timeout=0.5)
+            # Spec 5.8.3.13/.14 : le numéro 0 est "response only" (jamais de
+            # réponse à une requête) ; 256 désigne l'"edit buffer", donc la
+            # scène réellement chargée sur la console.
+            current_title = self.console.get_scene_title(sysex.SCENE_EDIT_BUFFER, timeout=0.5)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
             self.log(f"Erreur lecture du nom de la scène courante : {exc}")
             current_title = None
@@ -1007,7 +1010,11 @@ class App(tk.Tk):
             "Recall", 0, "recall_scene",
             lambda n, device: sysex.build_function_call(sysex.FUNC_SCENE_RECALL, n, device=device),
         ):
-            self._run_full_recall(title=f"RECALL scène {self.scene_var.get():02d} : lecture totale")
+            number = self.scene_var.get()
+            title = next((t for n, t in self._scene_titles if n == number), None)
+            if title is not None:
+                self.scene_title_var.set(title)
+            self._run_full_recall(title=f"RECALL scène {number:02d} : lecture totale")
 
     def _read_scene_title(self) -> None:
         if self.console is None:
