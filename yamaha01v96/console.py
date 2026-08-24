@@ -88,6 +88,13 @@ class V2Console:
     def get_scene_title(self, number: int, timeout: float = 1.0) -> str | None:
         req = sysex.build_title_request(sysex.FUNC_SCENE_TITLE, number, device=self.device)
         self.midi.send_sysex(req)
+        return self._receive_title(sysex.FUNC_SCENE_TITLE, number, timeout)
+
+    def set_scene_title(self, number: int, title: str) -> None:
+        msg = sysex.build_title_change(sysex.FUNC_SCENE_TITLE, number, title, device=self.device)
+        self.midi.send_sysex(msg)
+
+    def _receive_title(self, function: int, number: int, timeout: float) -> str | None:
         deadline = time.monotonic() + timeout
         while True:
             remaining = deadline - time.monotonic()
@@ -100,13 +107,42 @@ class V2Console:
             parsed = sysex.parse_title_change(full)
             if parsed is None:
                 continue
-            if parsed["function"] != sysex.FUNC_SCENE_TITLE or parsed["number"] != number:
+            if parsed["function"] != function or parsed["number"] != number:
                 continue
             return parsed["title"]
 
-    def set_scene_title(self, number: int, title: str) -> None:
-        msg = sysex.build_title_change(sysex.FUNC_SCENE_TITLE, number, title, device=self.device)
-        self.midi.send_sysex(msg)
+    def _list_library_titles(
+        self, function: int, count: int, timeout: float,
+        on_progress=None,
+    ) -> list[tuple[int, str | None]]:
+        """Fetch `count` titles (bank numbers 0..count-1), one title request
+        at a time. Each entry is None if that bank timed out (e.g. console
+        absent/simulation). `on_progress(number, count)`, if given, is
+        called after each bank so a caller can drive a progress bar."""
+        result = []
+        for number in range(count):
+            req = sysex.build_title_request(function, number, device=self.device)
+            self.midi.send_sysex(req)
+            result.append((number, self._receive_title(function, number, timeout)))
+            if on_progress is not None:
+                on_progress(number, count)
+        return result
+
+    def list_scene_titles(self, timeout: float = 0.3, on_progress=None) -> list[tuple[int, str | None]]:
+        """Scene library: 100 banks, numbered 00-99."""
+        return self._list_library_titles(sysex.FUNC_SCENE_TITLE, 100, timeout, on_progress)
+
+    def list_eq_library_titles(self, timeout: float = 0.3, on_progress=None) -> list[tuple[int, str | None]]:
+        """EQ library: 200 banks."""
+        return self._list_library_titles(sysex.FUNC_EQ_LIB_TITLE, 200, timeout, on_progress)
+
+    def list_gate_library_titles(self, timeout: float = 0.3, on_progress=None) -> list[tuple[int, str | None]]:
+        """Gate library (part of "Dynamics"): 200 banks."""
+        return self._list_library_titles(sysex.FUNC_GATE_LIB_TITLE, 200, timeout, on_progress)
+
+    def list_comp_library_titles(self, timeout: float = 0.3, on_progress=None) -> list[tuple[int, str | None]]:
+        """Compressor library (part of "Dynamics"): 200 banks."""
+        return self._list_library_titles(sysex.FUNC_COMP_LIB_TITLE, 200, timeout, on_progress)
 
     def recall_scene(self, number: int) -> None:
         """Recall scene memory `number` (0-99; 0 = current scene) on the console."""

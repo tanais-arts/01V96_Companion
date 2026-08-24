@@ -133,6 +133,9 @@ class Knob(tk.Frame):
         self._stale = False
         self._redraw()
 
+    def push_value(self) -> None:
+        self.app.set_parameter(self.group, self.name, self.value, channel=self.channel)
+
     def _on_read_failed(self) -> None:
         self._stale = True
         self._redraw()
@@ -194,6 +197,9 @@ class Toggle(tk.Frame):
         self._stale = False
         self._redraw()
 
+    def push_value(self) -> None:
+        self.app.set_parameter(self.group, self.name, self.value, channel=self.channel)
+
     def _on_read_failed(self) -> None:
         self._stale = True
         self._redraw()
@@ -244,11 +250,17 @@ class EnumSelector(tk.Frame):
     def set_raw_value(self, value: int) -> None:
         self.var.set(self.labels[value - self.pd.min])
 
+    def push_value(self) -> None:
+        self._on_change()
+
 
 class Fader(tk.Frame):
     """Linear vertical fader bound to a ParamDef (e.g. kInputFader.kFader)."""
 
-    def __init__(self, app, parent: tk.Widget, group: str, name: str, label: str, length: int = 240, channel: int | None = None, ui_scale: float = 1.0):
+    def __init__(
+        self, app, parent: tk.Widget, group: str, name: str, label: str, length: int = 240,
+        channel: int | None = None, ui_scale: float = 1.0, label_var: tk.StringVar | None = None,
+    ):
         super().__init__(parent)
         self.app = app
         self.group = group
@@ -260,7 +272,10 @@ class Fader(tk.Frame):
         title_font_size = max(1, round(9 * ui_scale))
         value_font_size = max(1, round(8 * ui_scale))
 
-        self.title_label = ttk.Label(self, text=label, font=("", title_font_size, "bold"), anchor="center")
+        if label_var is not None:
+            self.title_label = ttk.Label(self, textvariable=label_var, font=("", title_font_size, "bold"), anchor="center")
+        else:
+            self.title_label = ttk.Label(self, text=label, font=("", title_font_size, "bold"), anchor="center")
         self.title_label.pack()
         # from_ at the top (max = loudest), to at the bottom (min = quietest).
         self.scale = ttk.Scale(
@@ -306,38 +321,86 @@ class Fader(tk.Frame):
         self._stale = False
         self._redraw()
 
+    def push_value(self) -> None:
+        self.app.set_parameter(self.group, self.name, int(float(self.var.get())), channel=self.channel)
+
     def _on_read_failed(self) -> None:
         self._stale = True
         self._redraw()
 
 
 class MixName(tk.Frame):
-    """Read-only 4-char channel name label for a FIXED channel (MIX tab
-    overview) - reads kInputChannelName.kChannelNameShort1-4, joined."""
+    """Editable 4-char short-name label for a FIXED channel (MIX tab
+    overview) - reads/writes `{group}.{base_name}1-4`, joined. Double-click
+    to edit inline, like the "Nom du canal" field on the Tranche tab."""
 
-    def __init__(self, app, parent: tk.Widget, channel: int, width: int = 8, ui_scale: float = 1.0):
+    def __init__(
+        self, app, parent: tk.Widget, channel: int, group: str = "kInputChannelName",
+        base_name: str = "kChannelNameShort", width: int = 4, ui_scale: float = 1.0,
+    ):
         super().__init__(parent)
         self.app = app
-        self.group = "kInputChannelName"
-        self.name = "kChannelNameShort"
+        self.group = group
+        self.name = base_name
         self.channel = channel
+        self._names = [f"{base_name}{i}" for i in range(1, 5)]
+        self._pds = [app.params.get(group, n) for n in self._names]
         self._chars = [32, 32, 32, 32]
-        font_size = max(1, round(8 * ui_scale))
-        self.label = ttk.Label(self, text=str(channel + 1), font=("", font_size, "bold"), width=width, anchor="center")
-        self.label.pack()
+        self._width = width
+        # Toujours lisible : contrairement aux Knob/Toggle/Fader compacts de
+        # la vue MIX, ce nom doit rester grand même quand ui_scale est petit.
+        font_size = max(12, round(16 * ui_scale))
+        self._font = ("", font_size, "bold")
+        self.var = tk.StringVar(value=str(channel + 1))
+        self.label = ttk.Label(self, textvariable=self.var, font=self._font, width=width, anchor="center")
+        self.label.pack(fill="x")
+        self.label.bind("<Double-Button-1>", self._start_edit)
+        self.entry: ttk.Entry | None = None
         app.rows.append(self)
 
     def _redraw(self) -> None:
         text = "".join(chr(c) for c in self._chars).strip()
-        self.label.config(text=text or str(self.channel + 1))
+        self.var.set(text or str(self.channel + 1))
+
+    def _start_edit(self, _event: tk.Event | None = None) -> None:
+        if self.entry is not None:
+            return
+        self.label.pack_forget()
+        self.entry = ttk.Entry(self, width=self._width, justify="center", font=self._font)
+        self.entry.insert(0, "".join(chr(c) for c in self._chars).strip())
+        self.entry.pack(fill="x")
+        self.entry.focus_set()
+        self.entry.select_range(0, "end")
+        self.entry.bind("<Return>", self._commit_edit)
+        self.entry.bind("<FocusOut>", self._commit_edit)
+        self.entry.bind("<Escape>", lambda _e: self._end_edit())
+
+    def _commit_edit(self, _event: tk.Event | None = None) -> None:
+        if self.entry is None:
+            return
+        text = self.entry.get()[:4].ljust(4)
+        for name, pd, ch in zip(self._names, self._pds, [ord(c) for c in text]):
+            self.app.set_parameter(self.group, name, max(pd.min, min(pd.max, ch)), channel=self.channel)
+        self._chars = [ord(c) for c in text]
+        self._end_edit()
+
+    def _end_edit(self) -> None:
+        if self.entry is not None:
+            self.entry.destroy()
+            self.entry = None
+        self._redraw()
+        self.label.pack(fill="x")
 
     def get_value(self) -> None:
-        for i in range(4):
+        for i, name in enumerate(self._names):
             self.app.request_parameter(
-                self.group, f"kChannelNameShort{i + 1}",
-                on_result=lambda v, i=i: self._set_char(i, v), channel=self.channel,
+                self.group, name, on_result=lambda v, i=i: self._set_char(i, v), channel=self.channel,
             )
 
     def _set_char(self, index: int, value: int) -> None:
         self._chars[index] = value
         self._redraw()
+
+    def push_value(self) -> None:
+        for name, pd, ch in zip(self._names, self._pds, self._chars):
+            self.app.set_parameter(self.group, name, max(pd.min, min(pd.max, ch)), channel=self.channel)

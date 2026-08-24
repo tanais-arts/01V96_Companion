@@ -14,7 +14,9 @@ Run with: `python -m yamaha01v96.gui` (see scripts/run_gui.py too).
 """
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
 
@@ -26,6 +28,7 @@ from .strip_widgets import Knob, Toggle, EnumSelector, Fader, MixName
 
 SIMULATION_LABEL = "-- Simulation hors ligne --"
 DEFAULT_PORT_NAME = "YAMAHA 01V96 Port5"
+LIBRARY_CACHE_PATH = Path.home() / ".01v96-editor" / "library_cache.json"
 
 
 class LoggingMidi:
@@ -134,6 +137,9 @@ class ParamRow:
     def get_value(self) -> None:
         self.app.request_parameter(self.group, self.name, on_result=self.set_raw_value)
 
+    def push_value(self) -> None:
+        self._on_change()
+
 
 class NameRow:
     """Composite control for a multi-character name (channel/bus/effect
@@ -176,6 +182,9 @@ class NameRow:
         for i, name in enumerate(self.names):
             self.app.request_parameter(self.group, name, on_result=make_cb(i, name))
 
+    def push_value(self) -> None:
+        self.send()
+
 
 class App(tk.Tk):
     def __init__(self):
@@ -191,6 +200,11 @@ class App(tk.Tk):
         self.strip_clipboard: dict[tuple[str, str], int] | None = None
         self.strip_select_mode = False
         self.scene_title_var = tk.StringVar(value="")
+        self.scene_select_var = tk.StringVar(value="")
+        self._scene_combos: list[ttk.Combobox] = []
+        self._scene_titles: list[tuple[int, str | None]] = []
+        self._library_cache: dict[str, list] = {}
+        self._load_library_cache_from_disk()
         self._strip_read_after_id: str | None = None
         self._channel_cache: dict[int, dict[tuple[str, str], int]] = {}
         self._sync_after_id: str | None = None
@@ -255,6 +269,7 @@ class App(tk.Tk):
             return
         self.connect_btn.config(text="Déconnecter")
         self._run_full_recall()
+        self._load_scene_libraries()
         if self.sync_var.get():
             self._start_sync_poll()
 
@@ -295,17 +310,27 @@ class App(tk.Tk):
         self._build_effect_tab(nb)
 
     def _build_mix_tab(self, nb: ttk.Notebook) -> None:
-        """General mixer overview (à la Nuendo/Cubase MixConsole) : les 32
-        canaux d'entrée (nom court, pan, on/off, fader) en haut, puis les 8
-        départs AUX, les 4 retours FX et le MASTER sur une deuxième ligne
-        en dessous."""
+        """General mixer overview (à la Nuendo/Cubase MixConsole), en deux
+        sous-pages : "Tranches" (les 32 canaux d'entrée) et "Master" (départs
+        AUX 1-8, bus 1-8 et le bus stéréo MASTER)."""
         tab = ttk.Frame(nb)
         nb.add(tab, text="MIX")
 
         ttk.Button(tab, text="Tout lire", command=self.read_all).pack(anchor="w", padx=4, pady=4)
 
-        outer = ttk.Frame(tab)
-        outer.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+        sub_nb = ttk.Notebook(tab)
+        sub_nb.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
+        self._build_mix_channels_subtab(sub_nb)
+        self._build_mix_master_subtab(sub_nb)
+
+    @staticmethod
+    def _scrollable_row(parent: tk.Widget) -> ttk.Frame:
+        """Builds a horizontally-scrollable strip row inside `parent` and
+        returns the inner frame to pack strips into. Packed side="left" so
+        a fixed (non-scrolling) MASTER strip can share the same parent."""
+        outer = ttk.Frame(parent)
+        outer.pack(side="left", fill="both", expand=True, padx=4, pady=4)
         canvas = tk.Canvas(outer, highlightthickness=0)
         hbar = ttk.Scrollbar(outer, orient="horizontal", command=canvas.xview)
         canvas.configure(xscrollcommand=hbar.set)
@@ -315,43 +340,200 @@ class App(tk.Tk):
         inner = ttk.Frame(canvas)
         canvas.create_window((0, 0), window=inner, anchor="nw")
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        return inner
 
-        s = 0.5  # taille réduite de moitié pour faire tenir 32 tranches + AUX/FX/MASTER
+    def _build_master_strip(self, parent: tk.Widget, s: float, fader_len: int) -> None:
+        """Bus stéréo MASTER, toujours visible à droite (hors zone de
+        défilement) sur les 2 sous-pages MIX. En dessous : le nom de la
+        scène actuellement chargée sur la console, un menu déroulant listant
+        toutes les scènes de la bibliothèque (lue à la connexion), et les
+        boutons RECALL / STORE TO CONSOLE. Comme cette méthode est appelée
+        une fois par sous-page, `self.scene_select_var` (partagée) garde les
+        2 menus déroulants synchronisés, et `self._scene_combos` retient les
+        2 widgets pour pouvoir mettre à jour leur liste de valeurs ensemble."""
+        master = ttk.LabelFrame(parent, text="MASTER")
+        master.pack(side="right", fill="y", padx=(6, 4), pady=4)
+        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On", ui_scale=s).pack(pady=4)
+        Fader(self, master, "kStereoFader", "kFader", "MASTER", length=fader_len, ui_scale=s).pack()
+
+        ttk.Separator(master, orient="horizontal").pack(fill="x", pady=(8, 4))
+        ttk.Label(master, text="Scène courante :").pack(anchor="w")
+        ttk.Label(master, textvariable=self.scene_title_var, font=("", 10, "bold")).pack(fill="x", pady=(0, 4))
+
+        combo = ttk.Combobox(
+            master, textvariable=self.scene_select_var, state="readonly", width=14,
+            values=self._scene_combo_values(),
+        )
+        combo.pack(fill="x", pady=(0, 4))
+        self._scene_combos.append(combo)
+
+        ttk.Button(master, text="RECALL", command=self._recall_selected_scene).pack(fill="x", pady=(0, 2))
+        ttk.Button(master, text="STORE TO CONSOLE", command=self._store_to_console).pack(pady=(2, 2), fill="x")
+
+    def _store_to_console(self) -> None:
+        """Bouton MASTER "STORE TO CONSOLE" : pousse tous les réglages actuels du logiciel vers la console."""
+        self.write_all()
+
+    def _scene_combo_values(self) -> list[str]:
+        return [f"{number:02d} {title or ''}".rstrip() for number, title in self._scene_titles]
+
+    def _refresh_scene_combos(self) -> None:
+        values = self._scene_combo_values()
+        for combo in self._scene_combos:
+            combo.config(values=values)
+        if values and self.scene_select_var.get() not in values:
+            self.scene_select_var.set(values[0])
+
+    def _recall_selected_scene(self) -> None:
+        """Bouton MASTER "RECALL" : rappelle sur la console la scène choisie
+        dans le menu déroulant, puis relit la totalité des paramètres de
+        tous les canaux (hors bibliothèques, déjà en cache) - comme à la
+        connexion, avec barre de progression."""
+        text = self.scene_select_var.get().strip()
+        if not text:
+            messagebox.showerror("Scène", "Sélectionnez d'abord une scène dans la liste déroulante.")
+            return
+        try:
+            number = int(text[:2])
+        except ValueError:
+            messagebox.showerror("Scène", f"Numéro de scène introuvable dans {text!r}.")
+            return
+        self.scene_var.set(number)
+        if self._scene_action(
+            "Recall", 0, "recall_scene",
+            lambda n, device: sysex.build_function_call(sysex.FUNC_SCENE_RECALL, n, device=device),
+        ):
+            self.scene_title_var.set(text[2:].strip())
+            self._run_full_recall(title=f"RECALL scène {number:02d} : lecture totale")
+
+    def _load_library_cache_from_disk(self) -> None:
+        """Charge le dernier cache connu des noms de bibliothèques SCENE/EQ/
+        GATE/COMP (fichier JSON local) afin d'avoir un affichage immédiat
+        avant même la connexion à la console. Écrasé par une lecture fraîche
+        à chaque connexion (voir `_load_scene_libraries`)."""
+        try:
+            with open(LIBRARY_CACHE_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        self._library_cache = data
+        scene = data.get("scene")
+        if scene:
+            self._scene_titles = [(int(number), title) for number, title in scene]
+
+    def _save_library_cache_to_disk(self) -> None:
+        data = {
+            "scene": self._scene_titles,
+            "eq": self._library_cache.get("eq", []),
+            "gate": self._library_cache.get("gate", []),
+            "comp": self._library_cache.get("comp", []),
+        }
+        try:
+            LIBRARY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(LIBRARY_CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            self.log(f"Erreur écriture du cache des bibliothèques : {exc}")
+
+    def _load_scene_libraries(self) -> None:
+        """À la connexion : lit les noms des bibliothèques SCENE (100),
+        EQ (200), GATE (200) et COMP (200) depuis la console, les met en
+        cache localement (JSON), rafraîchit le(s) menu(s) déroulant(s) de
+        scène, puis affiche le nom de la scène actuellement chargée sur la
+        console (numéro 0 = scène courante)."""
+        if self.console is None:
+            return
+        total = 100 + 200 + 200 + 200
+        dialog, bar, label = self._show_progress_dialog(total, "Lecture des bibliothèques SCENE/EQ/GATE/COMP")
+        done = 0
+
+        def make_progress(step_label: str):
+            def cb(_number: int, _count: int) -> None:
+                nonlocal done
+                done += 1
+                bar["value"] = done
+                label.config(text=step_label)
+                dialog.update_idletasks()
+            return cb
+
+        try:
+            scene_titles = self.console.list_scene_titles(on_progress=make_progress("Bibliothèque SCENE…"))
+            eq_titles = self.console.list_eq_library_titles(on_progress=make_progress("Bibliothèque EQ…"))
+            gate_titles = self.console.list_gate_library_titles(on_progress=make_progress("Bibliothèque GATE…"))
+            comp_titles = self.console.list_comp_library_titles(on_progress=make_progress("Bibliothèque COMP…"))
+        finally:
+            dialog.grab_release()
+            dialog.destroy()
+
+        self._scene_titles = scene_titles
+        self._library_cache = {"eq": eq_titles, "gate": gate_titles, "comp": comp_titles}
+        self._save_library_cache_to_disk()
+        self._refresh_scene_combos()
+
+        try:
+            current_title = self.console.get_scene_title(0, timeout=0.5)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user directly
+            self.log(f"Erreur lecture du nom de la scène courante : {exc}")
+            current_title = None
+        if current_title is not None:
+            self.scene_title_var.set(current_title)
+
+    def _build_mix_channels_subtab(self, sub_nb: ttk.Notebook) -> None:
+        """Sous-page "Tranches" : les 32 canaux d'entrée (nom court, pan,
+        on/off, fader), avec le bus stéréo MASTER fixe à droite."""
+        tab = ttk.Frame(sub_nb)
+        sub_nb.add(tab, text="Tranches")
+        inner = self._scrollable_row(tab)
+
+        s = 0.5  # taille réduite de moitié pour faire tenir les 32 tranches
         fader_len = 80
 
-        channels_row = ttk.Frame(inner)
-        channels_row.pack(side="top", fill="x", anchor="w")
         for ch in range(32):
-            strip = ttk.LabelFrame(channels_row, text=str(ch + 1))
-            strip.pack(side="left", fill="y", padx=1, pady=2)
-            MixName(self, strip, ch, ui_scale=s).pack(pady=(2, 4))
+            column = ttk.Frame(inner)
+            column.pack(side="left", padx=1, pady=2)
+            strip = ttk.LabelFrame(column, text=str(ch + 1))
+            strip.pack(fill="y")
             Knob(self, strip, "kInputChannelPan", "kChannelPan", "Pan", channel=ch, ui_scale=s).pack()
             Toggle(self, strip, "kInputChannelOn", "kChannelOn", "On", channel=ch, ui_scale=s).pack(pady=4)
             Fader(self, strip, "kInputFader", "kFader", "", length=fader_len, channel=ch, ui_scale=s).pack()
+            MixName(self, column, ch, ui_scale=s).pack(fill="x", pady=(2, 0))
 
-        sends_row = ttk.Frame(inner)
-        sends_row.pack(side="top", fill="x", anchor="w", pady=(6, 0))
+        self._build_master_strip(tab, s, fader_len)
+
+    def _build_mix_master_subtab(self, sub_nb: ttk.Notebook) -> None:
+        """Sous-page "Master" : départs AUX 1-8 (avec nom éditable), bus 1-8
+        (avec nom éditable), et le bus stéréo MASTER fixe à droite. Pas de
+        faders FX ici : ceux-ci sont en fait des balances DRY/WET des
+        retours d'effets, inutilisées."""
+        tab = ttk.Frame(sub_nb)
+        sub_nb.add(tab, text="Master")
+        inner = self._scrollable_row(tab)
+
+        s = 0.5
+        fader_len = 80
 
         for a in range(8):
-            strip = ttk.LabelFrame(sends_row, text=f"AUX {a + 1}")
-            strip.pack(side="left", fill="y", padx=1, pady=2)
+            column = ttk.Frame(inner)
+            column.pack(side="left", padx=1, pady=2)
+            strip = ttk.LabelFrame(column, text=f"AUX {a + 1}")
+            strip.pack(fill="y")
             Toggle(self, strip, "kAUXChannelOn", "kChannelOn", "On", channel=a, ui_scale=s).pack(pady=4)
             Fader(self, strip, "kAUXFader", "kFader", "", length=fader_len, channel=a, ui_scale=s).pack()
+            MixName(self, column, a, group="kAUXModuleName", base_name="kAUXModuleNameShort", ui_scale=s).pack(fill="x", pady=(2, 0))
 
-        ttk.Separator(sends_row, orient="vertical").pack(side="left", fill="y", padx=6)
+        ttk.Separator(inner, orient="vertical").pack(side="left", fill="y", padx=6)
 
-        for e in range(4):
-            strip = ttk.LabelFrame(sends_row, text=f"FX {e + 1}")
-            strip.pack(side="left", fill="y", padx=1, pady=2)
-            Toggle(self, strip, "kEffect", "kEffectBypass", "Byp", channel=e, ui_scale=s).pack(pady=4)
-            Fader(self, strip, "kEffect", "kEffectMix", "", length=fader_len, channel=e, ui_scale=s).pack()
+        for b in range(8):
+            column = ttk.Frame(inner)
+            column.pack(side="left", padx=1, pady=2)
+            strip = ttk.LabelFrame(column, text=f"Bus {b + 1}")
+            strip.pack(fill="y")
+            Toggle(self, strip, "kBusChannelOn", "kChannelOn", "On", channel=b, ui_scale=s).pack(pady=4)
+            Fader(self, strip, "kBusFader", "kFader", "", length=fader_len, channel=b, ui_scale=s).pack()
+            MixName(self, column, b, group="kBusModuleName", base_name="kBusModuleNameShort", ui_scale=s).pack(fill="x", pady=(2, 0))
 
-        ttk.Separator(sends_row, orient="vertical").pack(side="left", fill="y", padx=6)
+        self._build_master_strip(tab, s, fader_len)
 
-        master = ttk.LabelFrame(sends_row, text="MASTER")
-        master.pack(side="left", fill="y", padx=1, pady=2)
-        Toggle(self, master, "kStereoChannelOn", "kChannelOn", "On", ui_scale=s).pack(pady=4)
-        Fader(self, master, "kStereoFader", "kFader", "", length=fader_len, ui_scale=s).pack()
 
     def _build_strip_tab(self, nb: ttk.Notebook) -> None:
         """One-window channel-strip overview (knobs/toggles), à la console
@@ -645,7 +827,8 @@ class App(tk.Tk):
         ttk.Label(
             tab,
             text="Recall : 0-99 (0 = scène courante). Store/Clear : 1-99. "
-                 "Recall relit ensuite automatiquement tous les contrôles (Tout lire).",
+                 "Recall relit ensuite automatiquement tous les paramètres de tous les canaux "
+                 "(comme à la connexion) - peut prendre 1-2 minutes.",
             foreground="#666",
         ).pack(anchor="w", padx=4, pady=(8, 0))
 
@@ -824,7 +1007,7 @@ class App(tk.Tk):
             "Recall", 0, "recall_scene",
             lambda n, device: sysex.build_function_call(sysex.FUNC_SCENE_RECALL, n, device=device),
         ):
-            self.read_all()
+            self._run_full_recall(title=f"RECALL scène {self.scene_var.get():02d} : lecture totale")
 
     def _read_scene_title(self) -> None:
         if self.console is None:
@@ -873,6 +1056,19 @@ class App(tk.Tk):
             row.get_value()
         self.log("Tout lire : terminé.")
 
+    def write_all(self) -> None:
+        """Re-send every parameter control's current (locally displayed)
+        value to the console - the reverse of read_all(). Used by the
+        MASTER "STORE TO CONSOLE" button to push the software's settings
+        onto the console."""
+        if self.console is None:
+            self.log("Non connecté : ouvrez une connexion (réelle ou simulation) d'abord.")
+            return
+        self.log(f"Store to console : {len(self.rows)} contrôle(s)…")
+        for row in self.rows:
+            row.push_value()
+        self.log("Store to console : terminé.")
+
     def _show_progress_dialog(self, total: int, title: str) -> tuple[tk.Toplevel, ttk.Progressbar, ttk.Label]:
         dialog = tk.Toplevel(self)
         dialog.title(title)
@@ -893,19 +1089,26 @@ class App(tk.Tk):
         dialog.grab_set()
         return dialog, bar, label
 
-    def _run_full_recall(self) -> None:
-        """Total recall au démarrage/à la connexion : lit tous les canaux
-        (1-32) de la Tranche, plus tous les autres contrôles de l'appli, en
-        affichant une boîte de progression qui se ferme une fois terminé.
-        Une fois en cache, naviguer entre canaux (Tranche) est instantané
-        et "Tout lire/Lire" ne sert plus qu'à resynchroniser manuellement."""
+    def _run_full_recall(self, title: str = "Lecture totale de la console") -> None:
+        """Total recall au démarrage/à la connexion, ou après un RECALL de
+        scène (voir _recall_scene/_recall_selected_scene) : lit tous les
+        canaux (1-32) de la Tranche, plus tous les autres contrôles de
+        l'appli, en affichant une boîte de progression qui se ferme une fois
+        terminé. Une fois en cache, naviguer entre canaux (Tranche) est
+        instantané et "Tout lire/Lire" ne sert plus qu'à resynchroniser
+        manuellement. Dure ~1-2 minutes (des milliers de lectures
+        individuelles) : le format de bulk dump de scène ('m', voir
+        sysex.py) est en fait des DONNÉES COMPRESSÉES propriétaires sans
+        structure documentée par paramètre, donc pas exploitable ici pour
+        aller plus vite - seule la lecture paramètre par paramètre est
+        possible avec les infos actuellement disponibles."""
         if self.console is None:
             return
         strip_defs = self._strip_param_defs()
         name_defs = [("kInputChannelName", f"kChannelNameLong{i}") for i in range(1, 17)]
         full_defs = strip_defs + name_defs
         total = 32 * len(full_defs) + len(self.rows)
-        dialog, bar, label = self._show_progress_dialog(total, "Lecture totale de la console")
+        dialog, bar, label = self._show_progress_dialog(total, title)
         done = 0
         try:
             for ch in range(32):
